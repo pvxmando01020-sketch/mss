@@ -1,0 +1,18 @@
+{
+  "name": "mss",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Multi-Model AI Chat — unified gateway + streaming web UI",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm run dev -w @mss/api\" \"npm run dev -w @mss/web\"",
+    "dev:api": "npm run dev -w @mss/api",
+    "dev:web": "npm run dev -w @mss/web",
+    "typecheck": "npm run typecheck -w @mss/api && npm run typecheck -w @mss/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
