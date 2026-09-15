@@ -12,10 +12,10 @@ import {
   streamChat,
 } from '@/lib/api';
 import type {
-  AttachmentPayload,
   ConversationMeta,
   MessagePayload,
   ModelInfo,
+  PendingAttachment,
   StoredMessage,
 } from '@/lib/types';
 import { translate, type Lang } from '@/lib/i18n';
@@ -32,7 +32,7 @@ export default function ChatPage() {
   const [selectedModel, setSelectedModel] = useState('auto');
   const [usedModel, setUsedModel] = useState('');
   const [input, setInput] = useState('');
-  const [attachment, setAttachment] = useState<AttachmentPayload | null>(null);
+  const [attachment, setAttachment] = useState<PendingAttachment | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [streamText, setStreamText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -121,7 +121,7 @@ export default function ChatPage() {
 
   /** Core streaming run: display is what to render, payload is what to send. */
   const runChat = useCallback(
-    async (display: StoredMessage[], payloadMessages: MessagePayload[]) => {
+    async (display: StoredMessage[], payloadMessages: MessagePayload[], persist = true) => {
       const controller = new AbortController();
       abortRef.current = controller;
       lastRunRef.current = { display, payload: payloadMessages };
@@ -132,10 +132,12 @@ export default function ChatPage() {
       let acc = '';
       let used = selectedModel;
       let convId = activeId;
+      let doneReason = '';
+      let failed = false;
 
       try {
         await streamChat(
-          { conversationId: convId, model: selectedModel, messages: payloadMessages },
+          { conversationId: convId, model: selectedModel, messages: payloadMessages, persist },
           (e) => {
             const d = e.data as Record<string, unknown>;
             if (e.event === 'start') {
@@ -152,7 +154,10 @@ export default function ChatPage() {
               setStreamText(acc);
             } else if (e.event === 'fallback') {
               setNotice(`${t.fallbackNotice} ${String(d.to)}`);
+            } else if (e.event === 'done') {
+              doneReason = String(d.stopReason ?? '');
             } else if (e.event === 'error') {
+              failed = true;
               setError(`${String(d.code)}: ${String(d.message)}`);
             }
           },
@@ -162,6 +167,11 @@ export default function ChatPage() {
         if ((err as Error).name !== 'AbortError') setError(String(err));
       } finally {
         const finalContent = acc;
+        const status: 'complete' | 'partial' | 'aborted' = failed
+          ? 'partial'
+          : doneReason === 'aborted'
+            ? 'aborted'
+            : 'complete';
         setMessages((prev) =>
           finalContent.length > 0
             ? [
@@ -171,6 +181,7 @@ export default function ChatPage() {
                   role: 'assistant' as const,
                   content: finalContent,
                   model: used,
+                  status,
                   createdAt: Date.now(),
                 },
               ]
@@ -199,12 +210,17 @@ export default function ChatPage() {
       role: m.role as 'user' | 'assistant',
       content: m.content,
     }));
+    const att = attachment
+      ? attachment.fileKey
+        ? { type: 'image' as const, mediaType: attachment.mediaType, fileKey: attachment.fileKey }
+        : { type: 'image' as const, mediaType: attachment.mediaType, dataUrl: attachment.dataUrl }
+      : undefined;
     const payload: MessagePayload[] = [
       ...history,
       {
         role: 'user',
         content: text,
-        ...(attachment ? { attachments: [attachment] } : {}),
+        ...(att ? { attachments: [att] } : {}),
       },
     ];
     setInput('');
@@ -228,7 +244,8 @@ export default function ChatPage() {
       role: m.role as 'user' | 'assistant',
       content: m.content,
     }));
-    void runChat(display, payload);
+    // The history (incl. the last user message) is already persisted → persist: false
+    void runChat(display, payload, false);
   }, [streaming, messages, runChat]);
 
   const retry = useCallback(() => {
@@ -356,6 +373,7 @@ export default function ChatPage() {
                   msg={m}
                   modelName={modelNameFor(m.model)}
                   onRegenerate={i === messages.length - 1 ? regenerate : undefined}
+                  t={t}
                 />
               ))}
               {streaming && (
@@ -369,6 +387,7 @@ export default function ChatPage() {
                   }}
                   modelName={modelNameFor(usedModel)}
                   isStreaming
+                  t={t}
                 />
               )}
             </div>

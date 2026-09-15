@@ -6,9 +6,10 @@ import type {
   SseEvent,
   SseEventName,
 } from './types';
+import { sessionHeaders } from './session';
 
 export async function fetchModels(): Promise<{ models: ModelInfo[]; hasRealKeys: boolean }> {
-  const res = await fetch('/api/models', { cache: 'no-store' });
+  const res = await fetch('/api/models', { cache: 'no-store', headers: sessionHeaders() });
   if (!res.ok) throw new Error('failed to load models');
   const json = (await res.json()) as { models?: ModelInfo[] };
   const models = json.models ?? [];
@@ -19,25 +20,36 @@ export async function fetchModels(): Promise<{ models: ModelInfo[]; hasRealKeys:
 }
 
 export async function fetchConversations(): Promise<ConversationMeta[]> {
-  const res = await fetch('/api/conversations', { cache: 'no-store' });
+  const res = await fetch('/api/conversations', { cache: 'no-store', headers: sessionHeaders() });
   if (!res.ok) throw new Error('failed to load conversations');
   return (await res.json()) as ConversationMeta[];
 }
 
 export async function fetchConversation(id: string): Promise<Conversation> {
-  const res = await fetch(`/api/conversations/${id}`, { cache: 'no-store' });
+  const res = await fetch(`/api/conversations/${id}`, { cache: 'no-store', headers: sessionHeaders() });
   if (!res.ok) throw new Error('failed to load conversation');
   return (await res.json()) as Conversation;
 }
 
 export async function deleteConversation(id: string): Promise<void> {
-  await fetch(`/api/conversations/${id}`, { method: 'DELETE' });
+  await fetch(`/api/conversations/${id}`, { method: 'DELETE', headers: sessionHeaders() });
+}
+
+/** Upload an image to S3 via the gateway; returns the stored object key. */
+export async function uploadImage(file: File): Promise<{ key: string; mediaType: string }> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch('/api/uploads', { method: 'POST', headers: sessionHeaders(), body: form });
+  if (!res.ok) throw new Error('upload failed');
+  return (await res.json()) as { key: string; mediaType: string };
 }
 
 export interface ChatPayload {
   conversationId: string | null;
   model: string;
   messages: MessagePayload[];
+  /** false on regenerate — the history is already persisted server-side. */
+  persist?: boolean;
 }
 
 /**
@@ -51,7 +63,7 @@ export async function streamChat(
 ): Promise<void> {
   const res = await fetch('/api/chat', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...sessionHeaders() },
     body: JSON.stringify(payload),
     signal,
   });

@@ -1,4 +1,4 @@
-import type { ModelDef, UnifiedMessage } from './types';
+import type { AdapterMessage, ModelDef } from './types';
 import { AppError } from './errors';
 
 /** MVP token estimation: chars / 4 (replaced by provider counters when available). */
@@ -6,7 +6,7 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-export function messageTokens(m: UnifiedMessage): number {
+export function messageTokens(m: AdapterMessage): number {
   let t = estimateTokens(m.content) + 4;
   for (const a of m.attachments ?? []) {
     const bytes = Math.max(0, a.dataUrl.length - 32) / 3;
@@ -17,7 +17,7 @@ export function messageTokens(m: UnifiedMessage): number {
 
 export interface ContextResult {
   system?: string;
-  messages: UnifiedMessage[];
+  messages: AdapterMessage[];
   estimatedTokens: number;
   dropped: number;
 }
@@ -30,7 +30,7 @@ export interface ContextResult {
 export function buildContext(
   model: ModelDef,
   system: string | undefined,
-  messages: UnifiedMessage[],
+  messages: AdapterMessage[],
 ): ContextResult {
   const budget = Math.floor(model.contextWindow * 0.8);
   const sysTokens = system ? estimateTokens(system) + 4 : 0;

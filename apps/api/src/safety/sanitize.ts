@@ -12,6 +12,7 @@ export const LIMITS = {
 };
 
 const ALLOWED_MEDIA = /^image\/(png|jpeg|webp)$/;
+const FILE_KEY_RE = /^attachments\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[A-Za-z0-9._-]+$/;
 
 /** Strip HTML/scripts, normalize encoding, remove control chars. */
 export function cleanText(input: string): string {
@@ -53,11 +54,19 @@ export function sanitizeMessages(messages: UnifiedMessage[]): UnifiedMessage[] {
         if (!ALLOWED_MEDIA.test(a.mediaType)) {
           throw new AppError('INVALID_INPUT', `attachment[${j}].mediaType not allowed (png/jpeg/webp)`, 400);
         }
-        if (!a.dataUrl.startsWith(`data:${a.mediaType};base64,`)) {
-          throw new AppError('INVALID_INPUT', `attachment[${j}] must be a base64 data URL`, 400);
+        if (!a.dataUrl && !a.fileKey) {
+          throw new AppError('INVALID_INPUT', `attachment[${j}] requires dataUrl or fileKey`, 400);
         }
-        if (a.dataUrl.length > LIMITS.maxDataUrlChars) {
-          throw new AppError('INVALID_INPUT', `attachment[${j}] too large (max 10MB)`, 400);
+        if (a.dataUrl) {
+          if (!a.dataUrl.startsWith(`data:${a.mediaType};base64,`)) {
+            throw new AppError('INVALID_INPUT', `attachment[${j}] must be a base64 data URL`, 400);
+          }
+          if (a.dataUrl.length > LIMITS.maxDataUrlChars) {
+            throw new AppError('INVALID_INPUT', `attachment[${j}] too large (max 10MB)`, 400);
+          }
+        }
+        if (a.fileKey && !FILE_KEY_RE.test(a.fileKey)) {
+          throw new AppError('INVALID_INPUT', `attachment[${j}] has an invalid fileKey`, 400);
         }
         return a;
       });

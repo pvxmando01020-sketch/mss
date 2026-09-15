@@ -1,7 +1,8 @@
 'use client';
 
-import { useRef } from 'react';
-import type { AttachmentPayload } from '@/lib/types';
+import { useRef, useState } from 'react';
+import type { PendingAttachment } from '@/lib/types';
+import { uploadImage } from '@/lib/api';
 
 interface Props {
   t: Record<string, string>;
@@ -10,13 +11,22 @@ interface Props {
   onSend: () => void;
   onStop: () => void;
   streaming: boolean;
-  attachment: AttachmentPayload | null;
-  onAttach: (a: AttachmentPayload) => void;
+  attachment: PendingAttachment | null;
+  onAttach: (a: PendingAttachment) => void;
   onRemoveAttachment: () => void;
 }
 
 const ALLOWED = ['image/png', 'image/jpeg', 'image/webp'];
 const MAX_BYTES = 10 * 1024 * 1024;
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(new Error('unreadable file'));
+    r.readAsDataURL(file);
+  });
+}
 
 export function Composer({
   t,
@@ -30,22 +40,47 @@ export function Composer({
   onRemoveAttachment,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
 
-  const handleFile = (file: File) => {
+  const handleFile = async (file: File) => {
     if (!ALLOWED.includes(file.type) || file.size > MAX_BYTES) return;
-    const reader = new FileReader();
-    reader.onload = () =>
-      onAttach({ type: 'image', mediaType: file.type, dataUrl: String(reader.result) });
-    reader.readAsDataURL(file);
+    let previewUrl: string;
+    try {
+      previewUrl = await fileToDataUrl(file);
+    } catch {
+      return;
+    }
+    setUploading(true);
+    try {
+      // Preferred path: store in S3 first → the saved message renders the
+      // stored object after a page reload.
+      const { key } = await uploadImage(file);
+      onAttach({ type: 'image', mediaType: file.type, previewUrl, fileKey: key });
+    } catch {
+      // Fallback: inline base64 in the chat body (works without object storage).
+      onAttach({ type: 'image', mediaType: file.type, previewUrl, dataUrl: previewUrl });
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
     <div className="border-t border-ink-200 bg-white/80 p-3 backdrop-blur dark:border-ink-800 dark:bg-ink-950/80">
       {attachment && (
         <div className="mb-2 flex items-center gap-2">
-          <img src={attachment.dataUrl} alt="attachment" className="h-14 w-14 rounded-lg object-cover" />
+          <img
+            src={attachment.previewUrl}
+            alt="attachment"
+            className="h-14 w-14 rounded-lg object-cover"
+          />
           <span className="text-xs text-ink-400">{attachment.mediaType}</span>
-          <button onClick={onRemoveAttachment} className="text-xs text-ink-500 hover:text-red-500">
+          <span className="text-[11px] text-ink-300">
+            {attachment.fileKey ? 'S3 ✓' : 'inline'}
+          </span>
+          <button
+            onClick={onRemoveAttachment}
+            className="text-xs text-ink-500 hover:text-red-500"
+          >
             ✕ {t.removeAttach}
           </button>
         </div>
@@ -58,7 +93,7 @@ export function Composer({
           className="hidden"
           onChange={(e) => {
             const f = e.target.files?.[0];
-            if (f) handleFile(f);
+            if (f) void handleFile(f);
             e.target.value = '';
           }}
         />
@@ -66,9 +101,9 @@ export function Composer({
           onClick={() => fileRef.current?.click()}
           title={t.attach}
           className="btn-ghost !px-2.5 !py-2.5"
-          disabled={streaming}
+          disabled={streaming || uploading}
         >
-          🖼
+          {uploading ? '…' : '🖼'}
         </button>
         <textarea
           value={value}

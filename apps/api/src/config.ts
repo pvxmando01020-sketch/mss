@@ -1,5 +1,13 @@
 import type { ModelDef } from './types';
 
+export interface S3Env {
+  endpoint?: string;
+  region?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  bucket?: string;
+}
+
 export interface Env {
   port: number;
   openaiKey?: string;
@@ -7,6 +15,9 @@ export interface Env {
   rateLimitPerMinute: number;
   rateLimitPerDay: number;
   moderationStrict: boolean;
+  databaseUrl?: string;
+  redisUrl?: string;
+  s3: S3Env;
 }
 
 export function loadEnv(): Env {
@@ -17,6 +28,15 @@ export function loadEnv(): Env {
     rateLimitPerMinute: Number(process.env.RATE_LIMIT_PER_MINUTE ?? 60),
     rateLimitPerDay: Number(process.env.RATE_LIMIT_PER_DAY ?? 2000),
     moderationStrict: process.env.MODERATION_STRICT === 'true',
+    databaseUrl: process.env.DATABASE_URL || undefined,
+    redisUrl: process.env.REDIS_URL || undefined,
+    s3: {
+      endpoint: process.env.S3_ENDPOINT || undefined,
+      region: process.env.S3_REGION || 'us-east-1',
+      accessKeyId: process.env.S3_ACCESS_KEY || undefined,
+      secretAccessKey: process.env.S3_SECRET_KEY || undefined,
+      bucket: process.env.S3_BUCKET || undefined,
+    },
   };
 }
 

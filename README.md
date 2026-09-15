@@ -49,17 +49,24 @@ npm run dev          # يعمل الـ API على 4000 والويب على 3000
 docker compose up --build
 ```
 
-## عقد الـ API (MVP)
+## عقد الـ API
 
 | الطريقة | المسار | الوصف |
 |---|---|---|
 | GET | `/v1/health` | فحص الصحة |
-| GET | `/v1/models` | النماذج المتاحة وقدراتها |
-| POST | `/v1/chat` | محادثة ببث SSE — أحداث: `start`, `delta`, `usage`, `done`, `fallback`, `error` |
+| GET | `/v1/models` | النماذج المتاحة وقدراتها (كاش Redis — TTL 60ث) |
+| POST | `/v1/chat` | محادثة ببث SSE — أحداث: `start`, `delta`, `usage`, `done`, `fallback`, `error`. الحقل `persist:false` لإعادة التوليد (لا يحفظ التاريخ المُعاد) |
+| POST | `/v1/uploads` | رفع صورة إلى S3 (multipart) → `{key, url, mediaType}` |
+| GET | `/v1/files/*` | عرض ملف مخزّن — مقيد بجلسة المصدّر |
 | POST | `/v1/conversations` | إنشاء محادثة |
-| GET | `/v1/conversations` | قائمة المحادثات |
-| GET | `/v1/conversations/{id}` | محادثة + رسائلها |
+| GET | `/v1/conversations` | محادثات الجلسة (عزل كامل بين الجلسات) |
+| GET | `/v1/conversations/{id}` | محادثة + رسائلها + مرفقاتها |
 | DELETE | `/v1/conversations/{id}` | حذف |
+
+### الجلسات والمستخدمون
+الواجهة تولّد معرّف جلسة (`x-session-id`) من `localStorage`. البوابة تعززه إلى صف
+`users.session_token` (مجهول — بدون مصادقة كاملة في هذه المرحلة)، وتُعزَل المحادثات
+والمرفقات وحدود الاستخدام **per-session** (عدّادات Redis بمفتاح معرّف الجلسة، لا IP).
 
 رموز الأخطاء الموحدة: `INVALID_INPUT` · `MODERATION_FLAGGED` · `RATE_LIMITED` · `CONTEXT_TOO_LONG` · `MODEL_UNAVAILABLE` · `UPSTREAM_ERROR` · `NOT_FOUND` · `INTERNAL`
 
@@ -95,14 +102,33 @@ curl -N -X POST http://localhost:4000/v1/chat \
 - [x] **المرحلة 1 — MVP**: Gateway موحد، محوّلات OpenAI + Claude + Mock، بث SSE، اختيار يدوي/تلقائي،
       سجل محادثات، RTL + Dark/Light، إيقاف التوليد، إعادة توليد، إرفاق صور (رؤية)، تحقق Zod،
       تنظيف مدخلات، كشف حقن، حدود استخدام، إدارة سياق، إعادة محاولة + Fallback، رموز أخطاء موحدة.
-- [ ] **المرحلة 2 — توسعة**: نماذج إضافية، PostgreSQL + Redis فعليين (الواجهات جاهزة)، S3 للمرفقات، اعتدال متقدم، تعديل رسائل.
+- [x] **المرحلة 2 — توسعة (التخزين الحقيقي)**:
+      - **PostgreSQL** خلف نفس `Store` interface (المخزن في الذاكرة يبقى fallback بدون `DATABASE_URL`):
+        `users` (جلسات مجهولة) · `conversations` · `messages` (مع `status`: complete/partial/aborted) · `attachments`.
+        Migrations مرقّمة تُطبَّق عند الإقلاع + `npm run migrate -w @mss/api`.
+      - **Redis**: عدّادات rate limiting per-session (INCR+EXPIRE) + كاش `/v1/models`.
+      - **S3-compatible** (MinIO محلياً، أي مزوّد S3 للإنتاج): رفع المرفقات قبل النموذج،
+        مفاتيح مقيدة بالجلسة `attachments/{userId}/…`، proxy `/v1/files/*` للعرض،
+        `presignGet` جاهز لنهايات S3 العامة.
+      - انقطاع البث يحفظ الرسالة بحالتها الفعلية (`aborted` عند إيقاف المستخدم / `partial` عند فشل التوليد) — لا فقدان صامت.
+      - إصلاح: إعادة التوليد لا تُعيد حفظ رسائل التاريخ (حقل `persist`).
+      - معايير القبول مُختبَرة: استرجاع كامل بعد إعادة التشغيل، per-session 429، مرفق يظهر بعد إعادة التحميل.
+      - يبقى من خطة المرحلة 2: نماذج إضافية، اعتدال محتوى متقدم (نقطة خارجية)، تعديل رسائل.
 - [ ] **المرحلة 3 — نضج**: اختيار ذكي (Classifier)، RAG عبر pgvector، وكلاء متعدّدو الأدوار، لوحة تحليلات.
 
 ## الهيكل
 
 ```
-apps/api     — Fastify + TypeScript: البوابة الموحدة (adapters, router, safety, store, SSE)
-apps/web     — Next.js + Tailwind: واجهة الدردشة (RTL, streaming, dark/light)
+apps/api
+  src/adapters    — openai.ts, anthropic.ts, mock.ts (Adapter Pattern)
+  src/db          — pool + migrations (001_init)
+  src/limiters    — memory.ts, redis.ts (per-session)
+  src/router      — القواعد (رؤية/كود/اقتصادي)
+  src/safety      — sanitize, moderation
+  src/storage     — s3.ts (put/get/presign)
+  src/store       — types.ts (العقد) + memory.ts + postgres.ts
+  src/routes.ts   — العقد الكامل + uploads/files
+apps/web     — Next.js + Tailwind: واجهة الدردشة (RTL, streaming, dark/light, S3 uploads)
 docs/        — العقد الفني (Word) + سكربت توليده
 tools/       — generate_contract.py (يعيد توليد المستند)
 ```

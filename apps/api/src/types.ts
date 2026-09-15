@@ -5,13 +5,32 @@ export type Role = 'system' | 'user' | 'assistant';
 export interface Attachment {
   type: 'image';
   mediaType: 'image/png' | 'image/jpeg' | 'image/webp';
-  dataUrl: string; // data:<mediaType>;base64,....
+  /** Base64 data URL (sent directly in the chat body). */
+  dataUrl?: string;
+  /** S3 object key (previously uploaded via POST /v1/uploads). */
+  fileKey?: string;
 }
 
+/** Attachment after server-side resolution — dataUrl is always filled for adapters. */
+export interface ResolvedAttachment {
+  type: 'image';
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp';
+  dataUrl: string;
+  fileKey?: string;
+}
+
+/** Wire form (input): attachments carry dataUrl and/or fileKey. */
 export interface UnifiedMessage {
   role: Role;
   content: string;
   attachments?: Attachment[];
+}
+
+/** Adapter form (post-resolution): dataUrl is always filled. */
+export interface AdapterMessage {
+  role: Role;
+  content: string;
+  attachments?: ResolvedAttachment[];
 }
 
 export interface ChatRequest {
@@ -59,7 +78,7 @@ export type AdapterEvent =
 
 export interface AdapterRequest {
   system?: string;
-  messages: UnifiedMessage[];
+  messages: AdapterMessage[];
   maxTokens?: number;
 }
 

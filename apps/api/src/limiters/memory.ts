@@ -1,16 +1,12 @@
+import type { RateCheck, RateLimiter } from './types';
+
 interface Bucket {
   minute: number[];
   day: number[];
 }
 
-export type RateCheck = { ok: true } | { ok: false; retryAfterSec: number };
-
-/**
- * Sliding-window rate limiter.
- * MVP: in-memory per user/IP. The Redis-backed implementation (INCR + EXPIRE)
- * plugs in behind the same interface in phase 2 for multi-instance deployments.
- */
-export class RateLimiter {
+/** Sliding-window in-memory limiter (fallback when no REDIS_URL). */
+export class MemoryRateLimiter implements RateLimiter {
   private buckets = new Map<string, Bucket>();
 
   constructor(
@@ -18,7 +14,7 @@ export class RateLimiter {
     private readonly perDay: number,
   ) {}
 
-  check(key: string): RateCheck {
+  async check(key: string): Promise<RateCheck> {
     const now = Date.now();
     let b = this.buckets.get(key);
     if (!b) {
@@ -41,7 +37,6 @@ export class RateLimiter {
     return { ok: true };
   }
 
-  /** Periodic housekeeping to keep memory bounded. */
   prune(now = Date.now()): void {
     const dayCut = now - 86_400_000;
     for (const [key, b] of this.buckets) {

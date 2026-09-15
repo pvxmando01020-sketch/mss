@@ -9,9 +9,10 @@ interface Props {
   modelName?: string;
   isStreaming?: boolean;
   onRegenerate?: () => void;
+  t: Record<string, string>;
 }
 
-export function MessageBubble({ msg, modelName, isStreaming, onRegenerate }: Props) {
+export function MessageBubble({ msg, modelName, isStreaming, onRegenerate, t }: Props) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const isUser = msg.role === 'user';
   const segments = splitCode(msg.content);
@@ -31,6 +32,18 @@ export function MessageBubble({ msg, modelName, isStreaming, onRegenerate }: Pro
             : 'border border-ink-200 bg-white dark:border-ink-800 dark:bg-ink-900'
         }`}
       >
+        {msg.attachments && msg.attachments.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {msg.attachments.map((a, i) => (
+              <img
+                key={i}
+                src={`/api/files/${a.fileKey}`}
+                alt="attachment"
+                className="max-h-56 max-w-full rounded-lg border border-ink-200 dark:border-ink-700"
+              />
+            ))}
+          </div>
+        )}
         {segments.map((s, i) =>
           s.type === 'code' ? (
             <div key={i} dir="ltr" className="my-2 overflow-hidden rounded-lg bg-ink-950 text-left">
@@ -61,6 +74,16 @@ export function MessageBubble({ msg, modelName, isStreaming, onRegenerate }: Pro
         {!isUser && modelName && (
           <span className="rounded-full border border-ink-200 bg-white px-2 py-0.5 text-[11px] text-ink-500 dark:border-ink-700 dark:bg-ink-900 dark:text-ink-400">
             {modelName}
+          </span>
+        )}
+        {!isUser && msg.status === 'aborted' && (
+          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+            ⏹ {t.stopped}
+          </span>
+        )}
+        {!isUser && msg.status === 'partial' && (
+          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+            ⚠ {t.partialMsg}
           </span>
         )}
         {!isUser && !isStreaming && onRegenerate && (
