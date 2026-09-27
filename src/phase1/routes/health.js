@@ -9,8 +9,8 @@ async function healthRoutes(fastify, opts) {
 
   fastify.get('/health', async () => ({
     ok: true,
-    version: '1.0.0',
-    phase: '1-core',
+    version: '1.1.0',
+    phase: '1+2+3+5',
     uptime_s: Math.floor(process.uptime()),
   }));
 

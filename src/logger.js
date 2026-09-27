@@ -18,10 +18,7 @@
  * @returns {number} 0..1
  */
 function estimateQuality(signals = {}) {
-  if (signals.thumbsDown) return 0.15;
-  if (signals.thumbsUp) return 0.92;
-  if (signals.regenerated) return 0.25;
-  // أخطاء الكود والـ Vibe Code — عقاب قوي مباشر (التحديث الجديد)
+  // أخطاء الكود والـ Vibe Code — أعلى أولوية (التحديث الجديد) — تفوق thumbs/regenerated
   if (signals.codeError) {
     const sev = { low: 0.35, medium: 0.18, high: 0.08, critical: 0.02 };
     return sev[signals.errorSeverity] ?? 0.12;
@@ -30,6 +27,9 @@ function estimateQuality(signals = {}) {
     const sev = { low: 0.4, medium: 0.18, high: 0.1, critical: 0.05 };
     return sev[signals.errorSeverity] ?? 0.18;
   }
+  if (signals.thumbsDown) return 0.15;
+  if (signals.thumbsUp) return 0.92;
+  if (signals.regenerated) return 0.25;
 
   let q = 0.72; // افتراضي محايد-إيجابي
 

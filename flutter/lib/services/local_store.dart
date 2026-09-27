@@ -101,9 +101,28 @@ class LocalStore extends ChangeNotifier {
   }
 
   Future<void> recordFeedback(String category, String model, double quality,
-      {int? latencyMs, bool regenerated = false, bool manualCorrection = false}) async {
-    scoreStore.update(category, model, quality,
-        latencyMs: latencyMs, regenerated: regenerated, manualCorrection: manualCorrection);
+      {int? latencyMs, bool regenerated = false, bool manualCorrection = false, bool codeError = false, bool vibeError = false, String? errorSeverity}) async {
+    double q = quality;
+    double? alphaOv;
+    if (codeError || vibeError) {
+      const sevMap = {'low': 0.35, 'medium': 0.18, 'high': 0.08, 'critical': 0.02};
+      const vibeMap = {'low': 0.4, 'medium': 0.18, 'high': 0.1, 'critical': 0.05};
+      final m = vibeError ? vibeMap : sevMap;
+      q = m[errorSeverity ?? 'medium'] ?? 0.12;
+      alphaOv = vibeError ? 0.35 : 0.4;
+    }
+    scoreStore.update(category, model, q,
+        latencyMs: latencyMs, regenerated: regenerated, manualCorrection: manualCorrection, alphaOverride: alphaOv);
+    await _persist();
+    notifyListeners();
+  }
+
+  // مخصص لأخطاء الكود — يعكس alpha القوي للـ backend
+  Future<void> recordCodeError(String category, String model, {String severity='medium', bool isVibe=false}) async {
+    await recordFeedback(category, model, 0.12, codeError: !isVibe, vibeError: isVibe, errorSeverity: severity);
+  }
+  Future<void> recordCodeSuccess(String category, String model) async {
+    scoreStore.update(category, model, 0.92, latencyMs: null, alphaOverride: 0.15);
     await _persist();
     notifyListeners();
   }

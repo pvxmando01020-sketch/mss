@@ -68,6 +68,9 @@ function classify(input, opts = {}) {
 
   // مسار rule-based الصريح (3a) — يُستخدم كـ fallback أيضًا
   const ruleResult = classifyRules(f);
+  // vibe/code قوي → يفوق الشجرة حتى لو ثقة الشجرة متوسطة
+  if (ruleResult.category === 'vibe' && ruleResult.confidence >= 0.85) return ruleResult;
+  if (ruleResult.category === 'code' && f.hasCode) return ruleResult;
   if (opts.useRulesOnly) return ruleResult;
 
   // مسار الشجرة (3d) — حساب logits
@@ -83,11 +86,14 @@ function classify(input, opts = {}) {
 
   // إذا كانت الثقة منخفضة جدًا (<0.38) نعود للقواعد — يحمي من ضوضاء الأوزان الأولية
   if (bestProb < 0.38) {
-    // دمج: إذا اتفق الاثنان نرفع الثقة، وإلا نفضل القواعد عندما تكون إشارة الكود قوية
+    // دمج: إذا اتفق الاثنان نرفع الثقة، وإلا نفضل القواعد عندما تكون إشارة الكود/الفايب قوية
     if (ruleResult.category === bestCat) {
       return { category: bestCat, confidence: Number(((bestProb + ruleResult.confidence) / 2).toFixed(3)), probs, method: 'tree' };
     }
+    if (['code','vibe'].includes(ruleResult.category)) return ruleResult;
     if (f.hasCode && ruleResult.category === 'code') return ruleResult;
+    // ثقة القواعد عالية (>0.8) → نثق بالقواعد حتى لو الشجرة غير متأكدة
+    if (ruleResult.confidence > 0.8) return ruleResult;
     return { category: bestCat, confidence: Number(bestProb.toFixed(3)), probs, method: 'tree' };
   }
 
@@ -135,7 +141,7 @@ function complexity(f, category) {
   // معقد: كود طويل، تحليل متعدد الخطوات، سؤال عربي طويل مركب
   if (
     wc > 180 ||
-    (category === 'code' && (wc > 80 || feats.hasCode)) ||
+    ((category === 'code' || category === 'vibe') && (wc > 80 || feats.hasCode)) ||
     (category === 'analysis' && wc > 90) ||
     (feats.arabicRatio > 0.5 && wc > 100)
   ) return 'complex';

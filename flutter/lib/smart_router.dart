@@ -6,11 +6,12 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
-/// الفئات الخمس — مطابقة للخطة والـ backend
-const categories = ['code', 'creative', 'analysis', 'retrieval', 'general'];
+/// الفئات الست — مطابقة للخطة والـ backend بعد تحديث vibe
+const categories = ['code', 'vibe', 'creative', 'analysis', 'retrieval', 'general'];
 
 const defaultModels = {
   'code': 'strong-code',
+  'vibe': 'strong-code',
   'creative': 'claude',
   'analysis': 'accurate-math',
   'retrieval': 'fast-cheap',
@@ -24,9 +25,10 @@ const _techDict = {
   'تحليل','برمجة','قاعدة','بيانات','كود','خوارزمية',
 };
 
-// أوزان الشجرة — نسخة مطابقة لـ TREE_WEIGHTS في classifier.js
+// أوزان الشجرة — نسخة مطابقة لـ TREE_WEIGHTS في classifier.js (6 فئات بعد vibe)
 const _treeWeights = {
   'code':     [2.8, 1.9, 1.2, 0.3, -0.2, 1.5, -0.8, -0.4, -1.0],
+  'vibe':     [1.9, 1.2, 0.9, 0.5, 0.1, 0.8, 0.3, -0.2, -0.6],
   'creative': [-1.2, -0.6, -0.3, 0.4, 0.6, -0.9, 2.2, -0.5, -0.7],
   'analysis': [-0.4, -0.2, 1.6, 0.7, 0.1, -0.6, -0.7, 2.4, -0.6],
   'retrieval':[-0.8, -0.5, -0.2, -0.9, 0.2, -0.7, -0.6, -0.5, 2.0],
@@ -127,6 +129,9 @@ ClassifyResult classify(String input) {
   // rules fallback
   ClassifyResult rulesResult() {
     final t = f.text;
+    if (RegExp(r'فايب|vibe|واجهة تفاعلية|أنيميشن', caseSensitive: false).hasMatch(t) || RegExp(r'vibe\s*code|landing\s*page|dashboard.*ui', caseSensitive: false).hasMatch(t)) {
+      return ClassifyResult('vibe', 0.88, {'vibe':0.88}, 'rules');
+    }
     if (f.hasCode || f.codeScore > 0.55) return ClassifyResult('code', 0.92, {'code':0.92}, 'rules');
     if (RegExp(r'برمج|كود|code|debug', caseSensitive: false).hasMatch(t)) return ClassifyResult('code', 0.82, {'code':0.82}, 'rules');
     if (f.wordCount < 48 && RegExp(r'لخص|ما هو|what is', caseSensitive: false).hasMatch(t)) return ClassifyResult('retrieval', 0.78, {'retrieval':0.78}, 'rules');
@@ -145,10 +150,15 @@ ClassifyResult classify(String input) {
   int bestIdx=0; for(int i=1;i<probsArr.length;i++) if(probsArr[i]>probsArr[bestIdx]) bestIdx=i;
   final bestCat = categories[bestIdx];
   final bestProb = probsArr[bestIdx];
+  final rEarly = rulesResult();
+  if (rEarly.category == 'vibe' && rEarly.confidence >= 0.85) return rEarly;
+  if (f.hasCode && rEarly.category == 'code') return rEarly;
   if (bestProb < 0.38) {
-    final r = rulesResult();
+    final r = rEarly;
     if (r.category==bestCat) return ClassifyResult(bestCat, (bestProb+r.confidence)/2, probs, 'tree');
+    if (['code','vibe'].contains(r.category)) return r;
     if (f.hasCode && r.category=='code') return r;
+    if (r.confidence > 0.8) return r;
     return ClassifyResult(bestCat, double.parse(bestProb.toStringAsFixed(3)), probs, 'tree');
   }
   return ClassifyResult(bestCat, double.parse(bestProb.toStringAsFixed(3)), probs, 'tree');
@@ -156,7 +166,7 @@ ClassifyResult classify(String input) {
 
 String complexityFor(Features f, String category) {
   final wc = f.wordCount;
-  if (wc > 180 || (category=='code' && (wc>80 || f.hasCode)) || (category=='analysis' && wc>90)) return 'complex';
+  if (wc > 180 || ((category=='code' || category=='vibe') && (wc>80 || f.hasCode)) || (category=='analysis' && wc>90)) return 'complex';
   if (wc>35 || f.technicalDensity>0.12 || f.intent==null) return 'medium';
   return 'simple';
 }
@@ -179,12 +189,13 @@ class ScoreStore {
   double get(String cat, String model) => scores[cat]?[model] ?? 0.5;
   int count(String cat, String model) => counts[cat]?[model] ?? 0;
 
-  double update(String cat, String model, double quality, {int? latencyMs, bool regenerated=false, bool manualCorrection=false}) {
+  double update(String cat, String model, double quality, {int? latencyMs, bool regenerated=false, bool manualCorrection=false, double? alphaOverride}) {
     scores.putIfAbsent(cat, ()=>{});
     counts.putIfAbsent(cat, ()=>{});
     scores[cat]!.putIfAbsent(model, ()=>0.5);
     counts[cat]!.putIfAbsent(model, ()=>0);
-    final a = manualCorrection ? math.min(0.6, alpha*2.5) : alpha;
+    final baseA = alphaOverride ?? alpha;
+    final a = manualCorrection ? math.min(0.6, baseA*2.5) : baseA;
     final q = quality.clamp(0,1);
     scores[cat]![model] = (1-a)*scores[cat]![model]! + a*q;
     counts[cat]![model] = counts[cat]![model]! + 1;

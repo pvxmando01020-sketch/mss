@@ -83,11 +83,24 @@ function route(input, store = new ScoreStore(), options = {}) {
     chosen = rest[Math.floor(Math.random() * rest.length)];
   }
 
-  // حالة complex + كود → الأقوى
-  if (lvl === 'complex' && cls.category === 'code' && candidates.includes('strong-code')) {
+  // حالة complex + كود/vibe → الأقوى
+  if (lvl === 'complex' && (cls.category === 'code' || cls.category === 'vibe') && candidates.includes('strong-code')) {
     const strong = ranked.find(r => r.model === 'strong-code');
     if (strong) chosen = strong;
   }
+
+  // تعديل الثقة بمعدل أخطاء الكود/Vibe (التحديث الجديد) — نفس منطق gateway.js
+  try {
+    const { singleton } = require('./learning/codeErrorLearner');
+    const adj = singleton.adjustConfidence(cls.category, chosen.model, confidence);
+    if (adj < confidence * 0.6 && candidates.length > 1) {
+      const rankedByError = [...candidates].sort((a,b) => singleton.getErrorRate(cls.category, a) - singleton.getErrorRate(cls.category, b));
+      if (singleton.getErrorRate(cls.category, rankedByError[0]) < singleton.getErrorRate(cls.category, chosen.model)) {
+        const alt = ranked.find(r => r.model === rankedByError[0]);
+        if (alt) chosen = alt;
+      }
+    }
+  } catch {}
 
   const explored = chosen.model !== best.model;
 

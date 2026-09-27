@@ -72,23 +72,25 @@ function buildRouteHandler(deps) {
 
     const total = Object.values(store.counts[cls.category] ?? {}).reduce((a, b) => a + b, 0);
     const noveltyPenalty = 1 / (1 + total);
-    const confidence = Number((store.get(cls.category, chosen) * (1 - noveltyPenalty)).toFixed(3));
+    let confidence = Number((store.get(cls.category, chosen) * (1 - noveltyPenalty)).toFixed(3));
 
       // لو المستوى معقد + يوجد نموذج أقوى متاح → استخدم الأقوى
     if (lvl === 'complex' && candidateModels.includes('strong-code') && (cls.category === 'code' || cls.category === 'vibe')) {
       chosen = 'strong-code';
+      confidence = Number((store.get(cls.category, chosen) * (1 - noveltyPenalty)).toFixed(3));
     }
 
     // تعديل الثقة بمعدل أخطاء الكود/Vibe (التحديث الجديد)
+    let adjustedConfidence = confidence;
     try {
       const { singleton } = require('./learning/codeErrorLearner');
-      const adj = singleton.adjustConfidence(cls.category, chosen, confidence);
-      // لا نغيّر confidence الأصلي في الرد، لكن نضيف adjustedConfidence للقرار الداخلي
-      // إذا كان errorRate عالي جداً (>0.4) وتوجد بدائل، تجاوز للنموذج الأقل أخطاء
-      if (adj < confidence * 0.6 && candidateModels.length > 1) {
+      adjustedConfidence = singleton.adjustConfidence(cls.category, chosen, confidence);
+      if (adjustedConfidence < confidence * 0.6 && candidateModels.length > 1) {
         const rankedByError = [...candidateModels].sort((a,b) => singleton.getErrorRate(cls.category, a) - singleton.getErrorRate(cls.category, b));
         if (singleton.getErrorRate(cls.category, rankedByError[0]) < singleton.getErrorRate(cls.category, chosen)) {
           chosen = rankedByError[0];
+          confidence = Number((store.get(cls.category, chosen) * (1 - noveltyPenalty)).toFixed(3));
+          adjustedConfidence = singleton.adjustConfidence(cls.category, chosen, confidence);
         }
       }
     } catch {}
@@ -97,11 +99,13 @@ function buildRouteHandler(deps) {
       category: cls.category,
       model: chosen,
       confidence,
+      adjustedConfidence,
       complexity: lvl,
       cached: false,
       key: hashKey(text, cls.category, chosen),
       candidates: candidateModels.map(m => ({ model: m, score: store.get(cls.category, m) })),
       method: cls.method,
+      errorRate: (()=>{ try{ const {singleton}=require('./learning/codeErrorLearner'); return singleton.getErrorRate(cls.category, chosen);}catch{return 0}})(),
     });
   };
 }

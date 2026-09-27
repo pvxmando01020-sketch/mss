@@ -69,9 +69,23 @@ class _ChatScreenState extends State<ChatScreen> {
         final last = _messages.last;
         _messages[_messages.length - 1] = ChatMessage(text: last.text, isUser: false, routing: res, response: res['response'] as String?);
       });
-      // سجل latency كـ proxy
+      // سجل latency كـ proxy + تعلم من أخطاء الكود التلقائية
       final latency = res['latency_ms'] as int?;
-      await store.recordFeedback(category, res['model'] as String? ?? local['model'] as String, 0.72, latencyMs: latency);
+      final modelUsed = res['model'] as String? ?? local['model'] as String;
+      final autoErr = res['autoError'];
+      if (autoErr != null && autoErr['errorScore'] != null && (autoErr['errorScore'] as num) > 0) {
+        final errs = (autoErr['errors'] as List?) ?? [];
+        final sev = errs.isNotEmpty ? (errs.first['severity'] ?? 'medium') : 'medium';
+        await store.recordFeedback(category, modelUsed, 0.12, codeError: category=='code', vibeError: category=='vibe', errorSeverity: sev);
+      } else {
+        // إذا كان رد يحتوي كود بدون أخطاء → نجاح
+        final hasCode = (res['response'] as String?)?.contains('```') ?? false;
+        if (hasCode && (category=='code' || category=='vibe')) {
+          await store.recordCodeSuccess(category, modelUsed);
+        } else {
+          await store.recordFeedback(category, modelUsed, 0.72, latencyMs: latency);
+        }
+      }
     } catch (e) {
       // فشل الشبكة → خزّن في طابور offline
       await store.enqueue(text, {'category': category, 'model': local['model']});
@@ -223,6 +237,9 @@ class _ChatScreenState extends State<ChatScreen> {
               } else {
                 await _gw.reportCodeError(model: model, category: category, errorType: chosenType, severity: chosenSeverity, codeSnippet: controller.text);
               }
+              // حدث المحلي أيضاً
+              final store = context.read<LocalStore>();
+              await store.recordCodeError(category, model, severity: chosenSeverity, isVibe: isVibe);
               if (!mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم الإبلاغ — سيتعلم النظام من هذا الخطأ (${chosenSeverity})')));
             } catch (e) {

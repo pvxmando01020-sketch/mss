@@ -82,11 +82,12 @@ async function conversationRoutes(fastify, opts) {
     const result = await callModel(decision.model, text);
     const latency_ms = Date.now() - t0;
     singleton.recordRequest(decision.category, result.model);
-    const analysis = analyze(result.text, { category: decision.category, vibeContext: req.body?.vibe_context || text });
+    const vibeCtx = req.body?.vibe_context ?? req.body?.vibeContext ?? null;
+    const analysis = analyze(result.text, { category: decision.category, vibeContext: vibeCtx || text });
     let autoError = null;
     if (analysis.hasCode && analysis.errorScore > 0) {
       autoError = { errorScore: analysis.errorScore, errors: analysis.errors, autoQuality: qualityFromErrors(analysis.errorScore) };
-      await singleton.recordError(store, { category: decision.category, model: result.model, errorType: analysis.errors[0]?.type || 'other', severity: analysis.errors[0]?.severity || 'medium', code_snippet: analysis.errors[0]?.snippet, error_message: analysis.errors[0]?.msg, vibe_context: req.body?.vibe_context || null, auto_detected: true, conversation_id: conv.id });
+      await singleton.recordError(store, { category: decision.category, model: result.model, errorType: analysis.errors[0]?.type || 'other', severity: analysis.errors[0]?.severity || 'medium', code_snippet: analysis.errors[0]?.snippet, error_message: analysis.errors[0]?.msg, vibe_context: vibeCtx, auto_detected: true, conversation_id: conv.id });
     } else if (analysis.hasCode) { singleton.recordSuccess(store, decision.category, result.model); }
 
     const assistantMsg = await convService.addMessage(config, conv.id, {

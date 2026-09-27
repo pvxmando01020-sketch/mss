@@ -4,6 +4,8 @@ import 'services/local_store.dart';
 import 'services/gateway_client.dart';
 import 'services/offline_sync.dart';
 import 'screens/auth_screen.dart';
+import 'screens/chat_screen.dart';
+import 'screens/settings_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

@@ -120,6 +120,16 @@ class CodeErrorLearner {
     for (const [k, v] of this.counts) obj[k] = { ...v };
     return { counts: obj, recent: this.recentErrors.slice(-20) };
   }
+
+  _reset() {
+    this.counts.clear();
+    this.recentErrors = [];
+  }
+
+  // للاختبارات — تصفير singleton
+  static resetSingleton() {
+    singleton._reset();
+  }
 }
 
 // نسخة واحدة مشتركة (singleton) — تُستخدم في server.js

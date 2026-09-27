@@ -28,7 +28,7 @@ async function adminRoutes(fastify, opts) {
       // fallback — تقديري من الذاكرة
       stats = { users: 'memory', conversations: 'memory', messages: 'memory', requests: 'memory', note: 'memory fallback — connect Postgres for real stats' };
     }
-    return { ok: true, stats, version: '1.0.0', phase: '1+2+3+4' };
+    return { ok: true, stats, version: '1.1.0', phase: '1+2+3+5' };
   });
 
   fastify.get('/v1/admin/routing', { preHandler: [requireAuth()] }, async (req, reply) => {

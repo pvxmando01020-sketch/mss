@@ -65,7 +65,7 @@ async function buildApp(opts = {}) {
     const { healthRoutes } = require('./phase1/routes/health');
     await fastify.register(healthRoutes, { config });
   } catch (e) {
-    fastify.get('/health', async () => ({ ok: true, version: '1.0.0', phase: '1+2+3+4' }));
+    fastify.get('/health', async () => ({ ok: true, version: '1.1.0', phase: '1+2+3+5' }));
     fastify.get('/v1/models', async () => ({ modelsByCategory: config.modelsByCategory }));
   }
   try {
@@ -136,11 +136,12 @@ async function buildApp(opts = {}) {
       decision = route(text, store, { cache, models: config.modelsByCategory, epsilon: config.routing.epsilon });
       if (decision.cached && decision.value) {
         // حفظ في المحادثة لو conversation_id موجود (مرحلة 2)
-        if (body.conversation_id) {
+        const _convIdCached = body.conversation_id ?? body.conversationId;
+        if (_convIdCached) {
           try {
             const convService = require('./phase2/services/conversationService');
-            await convService.addMessage(config, body.conversation_id, { role: 'user', content: text });
-            await convService.addMessage(config, body.conversation_id, { role: 'assistant', content: decision.value, model: decision.model, category: decision.category, confidence: decision.confidence });
+            await convService.addMessage(config, _convIdCached, { role: 'user', content: text });
+            await convService.addMessage(config, _convIdCached, { role: 'assistant', content: decision.value, model: decision.model, category: decision.category, confidence: decision.confidence });
           } catch {}
         }
         return reply.send({ ...decision, response: decision.value, source: 'cache', latency_ms: 0 });
@@ -170,9 +171,10 @@ async function buildApp(opts = {}) {
 
     // — التعلم من أخطاء الكود والـ Vibe Code (التحديث الجديد) —
     let autoError = null;
+    const vibeCtx = body.vibe_context ?? body.vibeContext ?? null;
     if (decision.category === 'code' || decision.category === 'vibe' || /```/.test(result.text)) {
       codeErrorLearner.recordRequest(decision.category, result.model);
-      const analysis = analyzeCode(result.text, { category: decision.category, vibeContext: body.vibe_context || text });
+      const analysis = analyzeCode(result.text, { category: decision.category, vibeContext: vibeCtx || text });
       if (analysis.hasCode && analysis.errorScore > 0) {
         const autoQuality = qualityFromErrors(analysis.errorScore);
         autoError = { errorScore: analysis.errorScore, errors: analysis.errors, autoQuality };
@@ -183,10 +185,10 @@ async function buildApp(opts = {}) {
           severity: analysis.errors[0]?.severity || 'medium',
           code_snippet: analysis.errors[0]?.snippet,
           error_message: analysis.errors[0]?.msg,
-          vibe_context: body.vibe_context || null,
+          vibe_context: vibeCtx,
           auto_detected: true,
           latency_ms,
-          conversation_id: body.conversation_id || null,
+          conversation_id: body.conversation_id || body.conversationId || null,
         });
       } else if (analysis.hasCode) {
         codeErrorLearner.recordSuccess(store, decision.category, result.model);
@@ -204,17 +206,20 @@ async function buildApp(opts = {}) {
     }
 
     // حفظ في المحادثة (مرحلة 2) لو conversation_id مُرسل
-    if (body.conversation_id) {
+    {
+      const _convIdSave = body.conversation_id ?? body.conversationId;
+      if (_convIdSave) {
       try {
         const convService = require('./phase2/services/conversationService');
         // تأكد أن المحادثة موجودة
-        const conv = await convService.getConversation(config, body.conversation_id);
+        const conv = await convService.getConversation(config, _convIdSave);
         if (conv) {
           // رسالة المستخدم قد تكون حُفظت مسبقاً في /conversations/:id/chat، لكن هنا نحفظها لو لم تكن
           // نتجنب التكرار بفحص آخر رسالة — تبسيط: نحفظ فقط رد المساعد
-          await convService.addMessage(config, body.conversation_id, { role: 'assistant', content: result.text, model: result.model, category: decision.category, confidence: decision.confidence, latency_ms });
+          await convService.addMessage(config, _convIdSave, { role: 'assistant', content: result.text, model: result.model, category: decision.category, confidence: decision.confidence, latency_ms });
         }
       } catch {}
+      }
     }
 
     // سجل في gateway_requests (مرحلة 1)
@@ -253,7 +258,10 @@ async function buildApp(opts = {}) {
 
   // — التحديث الجديد: التعلم من أخطاء الكود والـ Vibe Code —
   fastify.post('/v1/feedback/code-error', async (req, reply) => {
-    const { category, model, errorType, severity, code_snippet, error_message, vibe_context, conversation_id, message_id } = req.body ?? {};
+    const b = req.body ?? {};
+    const category = b.category, model = b.model, errorType = b.errorType ?? b.error_type, severity = b.severity;
+    const code_snippet = b.code_snippet ?? b.codeSnippet, error_message = b.error_message ?? b.errorMessage, vibe_context = b.vibe_context ?? b.vibeContext;
+    const conversation_id = b.conversation_id ?? b.conversationId, message_id = b.message_id ?? b.messageId;
     if (!model) return reply.code(400).send({ error: 'model is required' });
     const cat = category || (vibe_context ? 'vibe' : 'code');
     const sev = ['low','medium','high','critical'].includes(severity) ? severity : 'medium';
@@ -267,12 +275,10 @@ async function buildApp(opts = {}) {
   });
 
   fastify.post('/v1/feedback/vibe-error', async (req, reply) => {
-    const body = req.body ?? {};
-    body.category = 'vibe';
-    body.errorType = body.errorType || 'vibe_mismatch';
-    req.body = body;
-    // إعادة استخدام نفس handler
-    const { category, model, errorType, severity, code_snippet, error_message, vibe_context, conversation_id, message_id } = body;
+    const b = req.body ?? {};
+    const model = b.model, errorType = b.errorType ?? b.error_type ?? 'vibe_mismatch', severity = b.severity ?? 'medium';
+    const code_snippet = b.code_snippet ?? b.codeSnippet, error_message = b.error_message ?? b.errorMessage, vibe_context = b.vibe_context ?? b.vibeContext;
+    const conversation_id = b.conversation_id ?? b.conversationId, message_id = b.message_id ?? b.messageId;
     if (!model) return reply.code(400).send({ error: 'model is required' });
     const result = await codeErrorLearner.recordError(store, {
       category: 'vibe', model, errorType, severity: severity || 'medium',
@@ -306,7 +312,8 @@ async function buildApp(opts = {}) {
 
   // تحليل كود مباشر (للاختبار)
   fastify.post('/v1/code/analyze', async (req, reply) => {
-    const { text, category, vibe_context } = req.body ?? {};
+    const b = req.body ?? {};
+    const text = b.text, category = b.category, vibe_context = b.vibe_context ?? b.vibeContext;
     if (!text) return reply.code(400).send({ error: 'text is required' });
     const result = analyzeCode(text, { category, vibeContext: vibe_context });
     return reply.send(result);
@@ -314,7 +321,9 @@ async function buildApp(opts = {}) {
 
   // feedback يحسب quality عبر proxies (مرحلة 3b) — محدث ليدعم codeError/vibeError
   fastify.post('/v1/feedback/auto', async (req, reply) => {
-    const { category, model, latency_ms, regenerated, editedLength, originalLength, thumbsUp, thumbsDown, manualCorrection, conversation_id, message_id, codeError, vibeError, errorSeverity } = req.body ?? {};
+    const b = req.body ?? {};
+    const category = b.category, model = b.model, latency_ms = b.latency_ms ?? b.latencyMs, regenerated = b.regenerated, editedLength = b.editedLength, originalLength = b.originalLength, thumbsUp = b.thumbsUp, thumbsDown = b.thumbsDown, manualCorrection = b.manualCorrection;
+    const conversation_id = b.conversation_id ?? b.conversationId, message_id = b.message_id ?? b.messageId, codeError = b.codeError, vibeError = b.vibeError, errorSeverity = b.errorSeverity ?? b.severity;
     if (!category || !model) return reply.code(400).send({ error: 'category and model required' });
     const quality = estimateQuality({ regenerated, editedLength, originalLength, latency_ms, thumbsUp, thumbsDown, codeError, vibeError, errorSeverity });
     const entry = { category, model, quality_score: quality, latency_ms, regenerated, manualCorrection };
@@ -481,7 +490,7 @@ function buildStubApp(store, cache, opts) {
   // سجل مباشرة كل المسارات المطلوبة للـ stub
   return (async () => {
     // health fallback
-    stub.get('/health', async (req, reply) => reply.send({ ok: true, version: '1.0.0-stub', phase: '1+2+3+4' }));
+    stub.get('/health', async (req, reply) => reply.send({ ok: true, version: '1.1.0-stub', phase: '1+2+3+5' }));
     stub.get('/ready', async (req, reply) => reply.send({ ok: true, checks: { postgres: 'memory-fallback', redis: 'memory-fallback' } }));
     stub.get('/v1/models', async (req, reply) => reply.send({ modelsByCategory: config.modelsByCategory, adapters: require('./adapters/modelAdapter').adapters }));
     stub.get('/metrics', async (req, reply) => {
@@ -543,11 +552,12 @@ function buildStubApp(store, cache, opts) {
         const { route } = require('./router');
         decision = route(text, store, { cache, models: config.modelsByCategory });
         if (decision.cached && decision.value) {
-          if (body.conversation_id) {
+          const _cidCached = body.conversation_id ?? body.conversationId;
+          if (_cidCached) {
             try {
               const convService = require('./phase2/services/conversationService');
-              const conv = await convService.getConversation(config, body.conversation_id);
-              if (conv) await convService.addMessage(config, body.conversation_id, { role: 'assistant', content: decision.value, model: decision.model, category: decision.category, confidence: decision.confidence, latency_ms: 0 });
+              const conv = await convService.getConversation(config, _cidCached);
+              if (conv) await convService.addMessage(config, _cidCached, { role: 'assistant', content: decision.value, model: decision.model, category: decision.category, confidence: decision.confidence, latency_ms: 0 });
             } catch {}
           }
           return reply.send({ ...decision, response: decision.value, source: 'cache', latency_ms: 0 });
@@ -560,24 +570,28 @@ function buildStubApp(store, cache, opts) {
         if (post.action === 'block') return reply.send({ ...decision, response: '[تم حجب الرد بسبب السياسة]', blocked: true, latency_ms: result.latency_ms });
       }
       let autoError = null;
+      const vibeCtxStub = body.vibe_context ?? body.vibeContext ?? null;
       if (decision.category === 'code' || decision.category === 'vibe' || /```/.test(result.text)) {
         codeErrorLearner.recordRequest(decision.category, result.model);
-        const analysis = analyzeCode(result.text, { category: decision.category, vibeContext: body.vibe_context || text });
+        const analysis = analyzeCode(result.text, { category: decision.category, vibeContext: vibeCtxStub || text });
         if (analysis.hasCode && analysis.errorScore > 0) {
           autoError = { errorScore: analysis.errorScore, errors: analysis.errors, autoQuality: qualityFromErrors(analysis.errorScore) };
-          await codeErrorLearner.recordError(store, { category: decision.category, model: result.model, errorType: analysis.errors[0]?.type || 'other', severity: analysis.errors[0]?.severity || 'medium', code_snippet: analysis.errors[0]?.snippet, error_message: analysis.errors[0]?.msg, vibe_context: body.vibe_context || null, auto_detected: true });
+          await codeErrorLearner.recordError(store, { category: decision.category, model: result.model, errorType: analysis.errors[0]?.type || 'other', severity: analysis.errors[0]?.severity || 'medium', code_snippet: analysis.errors[0]?.snippet, error_message: analysis.errors[0]?.msg, vibe_context: vibeCtxStub, auto_detected: true });
         } else if (analysis.hasCode) { codeErrorLearner.recordSuccess(store, decision.category, result.model); }
       }
       if (!useDirect && decision.complexity === 'simple') {
         const { hashKey } = require('./cache');
         cache.set(hashKey(text, decision.category, decision.model), result.text);
       }
-      if (body.conversation_id) {
+      {
+        const _cidSaveStub = body.conversation_id ?? body.conversationId;
+        if (_cidSaveStub) {
         try {
           const convService = require('./phase2/services/conversationService');
-          const conv = await convService.getConversation(config, body.conversation_id);
-          if (conv) await convService.addMessage(config, body.conversation_id, { role: 'assistant', content: result.text, model: result.model, category: decision.category, confidence: decision.confidence, latency_ms: result.latency_ms });
+          const conv = await convService.getConversation(config, _cidSaveStub);
+          if (conv) await convService.addMessage(config, _cidSaveStub, { role: 'assistant', content: result.text, model: result.model, category: decision.category, confidence: decision.confidence, latency_ms: result.latency_ms });
         } catch {}
+        }
       }
       if (req.user?.id) {
         try { const { incUsage } = require('./phase2/services/quotaService'); await incUsage(config, req.user.id, result.usage?.prompt_tokens || 0); } catch {}
@@ -598,14 +612,16 @@ function buildStubApp(store, cache, opts) {
     });
 
     stub.post('/v1/feedback/code-error', async (req, reply) => {
-      const { category, model, errorType, severity, code_snippet, error_message, vibe_context } = req.body ?? {};
+      const b = req.body ?? {};
+      const category = b.category, model = b.model, errorType = b.errorType ?? b.error_type, severity = b.severity, code_snippet = b.code_snippet ?? b.codeSnippet, error_message = b.error_message ?? b.errorMessage, vibe_context = b.vibe_context ?? b.vibeContext;
       if (!model) return reply.code(400).send({ error: 'model is required' });
       const cat = category || (vibe_context ? 'vibe' : 'code');
       const result = await codeErrorLearner.recordError(store, { category: cat, model, errorType: errorType || 'other', severity: severity || 'medium', code_snippet, error_message, vibe_context, auto_detected: false });
       return reply.send({ ok: true, ...result, score: store.get(cat, model), errorRate: codeErrorLearner.getErrorRate(cat, model) });
     });
     stub.post('/v1/feedback/vibe-error', async (req, reply) => {
-      const { model, errorType, severity, code_snippet, error_message, vibe_context } = req.body ?? {};
+      const b = req.body ?? {};
+      const model = b.model, errorType = b.errorType ?? b.error_type ?? 'vibe_mismatch', severity = b.severity, code_snippet = b.code_snippet ?? b.codeSnippet, error_message = b.error_message ?? b.errorMessage, vibe_context = b.vibe_context ?? b.vibeContext;
       if (!model) return reply.code(400).send({ error: 'model is required' });
       const result = await codeErrorLearner.recordError(store, { category: 'vibe', model, errorType: errorType || 'vibe_mismatch', severity: severity || 'medium', code_snippet, error_message, vibe_context, auto_detected: false });
       return reply.send({ ok: true, ...result, score: store.get('vibe', model), errorRate: codeErrorLearner.getErrorRate('vibe', model) });
@@ -624,7 +640,8 @@ function buildStubApp(store, cache, opts) {
       return reply.send({ ...stats, rates, store: store.summaryForPostgres() });
     });
     stub.post('/v1/code/analyze', async (req, reply) => {
-      const { text, category, vibe_context } = req.body ?? {};
+      const b = req.body ?? {};
+      const text = b.text, category = b.category, vibe_context = b.vibe_context ?? b.vibeContext;
       if (!text) return reply.code(400).send({ error: 'text is required' });
       return reply.send(analyzeCode(text, { category, vibeContext: vibe_context }));
     });
@@ -648,7 +665,7 @@ if (require.main === module) {
     const app = await buildApp();
     const addr = await app.listen({ host: config.host, port: config.port });
     // eslint-disable-next-line no-console
-    console.log(`MSS Gateway (1+2+3+4) listening on ${config.host}:${config.port} —`, addr);
+    console.log(`MSS Gateway (1+2+3+5) listening on ${config.host}:${config.port} —`, addr);
   })().catch(e => { console.error(e); process.exit(1); });
 }
 
