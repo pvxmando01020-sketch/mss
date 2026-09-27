@@ -1,5 +1,6 @@
 -- 003_code_errors.sql — التعلم من أخطاء الكود والـ Vibe Code (التحديث الجديد)
 -- يخزن كل خطأ مع سياقه ليُستخدم في تحديث أوزان التوجيه
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 CREATE TABLE IF NOT EXISTS code_errors (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
