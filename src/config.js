@@ -8,6 +8,9 @@ module.exports = {
   port: Number(process.env.PORT || 3000),
   host: process.env.HOST || '0.0.0.0',
 
+  jwtSecret: process.env.JWT_SECRET || 'change-me-in-production-min-32-chars',
+  isProd: (process.env.NODE_ENV || '').toLowerCase() === 'production',
+
   // Postgres — لو غير متوفر يعمل fallback in-memory
   databaseUrl: process.env.DATABASE_URL || null,
   pg: {

@@ -1,0 +1,26 @@
+# docker-compose.prod.yml — تراكب للإنتاج (بدون منافذ DB/Redis مكشوفة)
+services:
+  gateway:
+    environment:
+      NODE_ENV: production
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 512M }
+        reservations: { cpus: "0.5", memory: 256M }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  db:
+    ports: []  # لا تكشف Postgres للخارج
+    deploy:
+      resources:
+        limits: { memory: 512M }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  redis:
+    ports: []
+  minio:
+    ports: ["9000:9000", "9001:9001"]  # S3 يبقى خلف gateway فقط

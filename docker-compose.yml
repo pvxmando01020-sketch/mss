@@ -1,30 +1,73 @@
-version: "3.9"
+name: mss-gateway
+
 services:
   gateway:
     build: .
+    image: mss-ai-gateway:1.1.0
     ports: ["3000:3000"]
     environment:
+      HOST: 0.0.0.0
+      PORT: 3000
       DATABASE_URL: postgres://postgres:postgres@db:5432/mss_gateway
       REDIS_URL: redis://redis:6379
       S3_BUCKET: mss-uploads
       S3_ENDPOINT: http://minio:9000
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: minio
+      AWS_SECRET_ACCESS_KEY: minio12345
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production-min-32-chars-please-override}
       ROUTING_ALPHA: 0.2
       ROUTING_EPSILON: 0.1
       MODERATION_ENABLED: "false"
-    depends_on: [db, redis]
-    command: node src/server.js
+      MODELS_JSON: '{"code":["strong-code","fast-cheap"],"vibe":["strong-code","claude"],"creative":["claude","fast-cheap"],"analysis":["accurate-math","claude"],"retrieval":["fast-cheap"],"general":["fast-cheap"]}'
+    env_file: [.env]
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks: [mss-net]
+    command: >
+      sh -c "node scripts/wait-for-db.js && node scripts/migrate.js && node src/server.js"
 
   db:
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: mss_gateway
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${PGPASSWORD:-postgres}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mss_gateway"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    networks: [mss-net]
+    # في الإنتاج احذف ports أو قيده: "127.0.0.1:5432:5432"
     ports: ["5432:5432"]
-    volumes: ["pgdata:/var/lib/postgresql/data", "./migrations:/docker-entrypoint-initdb.d"]
 
   redis:
     image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks: [mss-net]
     ports: ["6379:6379"]
 
   minio:
@@ -33,7 +76,21 @@ services:
     environment:
       MINIO_ROOT_USER: minio
       MINIO_ROOT_PASSWORD: minio12345
+    volumes: [miniodata:/data]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks: [mss-net]
     ports: ["9000:9000", "9001:9001"]
 
 volumes:
   pgdata:
+  redisdata:
+  miniodata:
+
+networks:
+  mss-net:
+    driver: bridge

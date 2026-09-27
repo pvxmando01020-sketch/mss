@@ -31,6 +31,10 @@ function createStores(opts = {}) {
  * يبني تطبيق Fastify حقيقي لو fastify متوفر، وإلا يعيد stub للاختبارات
  */
 async function buildApp(opts = {}) {
+  // تحذير أمان للإنتاج
+  if (config.isProd && (!config.jwtSecret || config.jwtSecret.includes('change-me') || config.jwtSecret.length < 32)) {
+    console.error('⛔ JWT_SECRET غير آمن للإنتاج — ضع قيمة عشوائية ≥32 محرف في .env');
+  }
   const { store, cache } = createStores(opts);
   let fastify;
   try {

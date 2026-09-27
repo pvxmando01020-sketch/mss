@@ -22,6 +22,10 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "seed": "node scripts/seed.js",
+    "migrate": "node scripts/migrate.js",
+    "migrate:psql": "for f in migrations/*.sql; do echo \"→ $f\"; psql $DATABASE_URL -f \"$f\"; done",
+    "migrate:memory": "echo 'memory fallback — no DB to migrate'",
+    "wait:db": "node scripts/wait-for-db.js",
     "test": "node --test tests/**/*.test.js",
     "test:verbose": "node --test --test-reporter=spec tests/**/*.test.js",
     "benchmark": "node scripts/benchmark.js",
@@ -29,8 +33,10 @@
     "example:phase1": "node examples/phase1-phase2.js",
     "example:full": "node examples/full-journey.js",
     "lint": "node --check src/**/*.js",
-    "migrate": "for f in migrations/*.sql; do echo \"→ $f\"; psql $DATABASE_URL -f \"$f\"; done",
-    "migrate:memory": "echo 'memory fallback — no DB to migrate'"
+    "docker:build": "docker build -t mss-ai-gateway:1.1.0 .",
+    "docker:up": "docker compose up -d --build",
+    "docker:logs": "docker compose logs -f gateway",
+    "docker:down": "docker compose down"
   },
   "keywords": ["ai-gateway", "fastify", "postgres", "redis", "s3", "smart-routing", "flutter", "jwt", "moderation"],
   "license": "MIT",
