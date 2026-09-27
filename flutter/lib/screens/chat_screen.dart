@@ -153,6 +153,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   Row(children: [
                     IconButton(icon: const Icon(Icons.thumb_up, size: 18), onPressed: () => store.recordFeedback(r['category'] as String, r['model'] as String, 0.92, thumbsUp: true)),
                     IconButton(icon: const Icon(Icons.thumb_down, size: 18), onPressed: () => store.recordFeedback(r['category'] as String, r['model'] as String, 0.15, thumbsDown: true)),
+                    IconButton(icon: const Icon(Icons.bug_report, size: 18, color: Colors.red), tooltip: 'خطأ كود', onPressed: () => _reportCodeError(r['category'] as String, r['model'] as String, m.response)),
                     IconButton(icon: const Icon(Icons.refresh, size: 18), onPressed: () {
                       store.recordFeedback(r['category'] as String, r['model'] as String, 0.25, regenerated: true);
                       _manualSwitch(i, r['model'] as String);
@@ -182,5 +183,55 @@ class _ChatScreenState extends State<ChatScreen> {
       ListTile(title: Text('اختر نموذجًا لفئة: $category'), subtitle: const Text('سيُسجل كـ correction قوي ويحدّث الأوزان')),
       for (final m in models) ListTile(title: Text(m), onTap: () { Navigator.pop(context); _manualSwitch(index, m); }),
     ]));
+  }
+
+  Future<void> _reportCodeError(String category, String model, String? codeSnippet) async {
+    final isVibe = category == 'vibe';
+    String chosenSeverity = 'medium';
+    String chosenType = isVibe ? 'vibe_mismatch' : 'other';
+    final controller = TextEditingController(text: codeSnippet != null && codeSnippet.length > 500 ? codeSnippet.substring(0, 500) : codeSnippet ?? '');
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(isVibe ? 'الإبلاغ عن خطأ Vibe' : 'الإبلاغ عن خطأ كود'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          DropdownButtonFormField<String>(value: chosenType, items: [
+            if (!isVibe) const DropdownMenuItem(value: 'syntax', child: Text('syntax')),
+            if (!isVibe) const DropdownMenuItem(value: 'runtime', child: Text('runtime')),
+            if (!isVibe) const DropdownMenuItem(value: 'logic', child: Text('logic')),
+            const DropdownMenuItem(value: 'security', child: Text('security')),
+            if (!isVibe) const DropdownMenuItem(value: 'other', child: Text('other')),
+            if (isVibe) const DropdownMenuItem(value: 'vibe_mismatch', child: Text('vibe_mismatch')),
+          ], onChanged: (v) => chosenType = v ?? chosenType, decoration: const InputDecoration(labelText: 'نوع الخطأ')),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(value: chosenSeverity, items: const [
+            DropdownMenuItem(value: 'low', child: Text('low')),
+            DropdownMenuItem(value: 'medium', child: Text('medium')),
+            DropdownMenuItem(value: 'high', child: Text('high')),
+            DropdownMenuItem(value: 'critical', child: Text('critical')),
+          ], onChanged: (v) => chosenSeverity = v ?? chosenSeverity, decoration: const InputDecoration(labelText: 'الخطورة')),
+          const SizedBox(height: 8),
+          TextField(controller: controller, maxLines: 4, decoration: const InputDecoration(labelText: 'مقتطف الكود (اختياري)', border: OutlineInputBorder())),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
+          FilledButton(onPressed: () async {
+            Navigator.pop(ctx);
+            try {
+              if (isVibe) {
+                await _gw.reportVibeError(model: model, errorType: chosenType, severity: chosenSeverity, codeSnippet: controller.text, conversationId: null);
+              } else {
+                await _gw.reportCodeError(model: model, category: category, errorType: chosenType, severity: chosenSeverity, codeSnippet: controller.text);
+              }
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم الإبلاغ — سيتعلم النظام من هذا الخطأ (${chosenSeverity})')));
+            } catch (e) {
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل الإبلاغ: $e')));
+            }
+          }, child: const Text('إرسال')),
+        ],
+      ),
+    );
   }
 }

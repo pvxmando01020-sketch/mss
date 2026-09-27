@@ -74,10 +74,24 @@ function buildRouteHandler(deps) {
     const noveltyPenalty = 1 / (1 + total);
     const confidence = Number((store.get(cls.category, chosen) * (1 - noveltyPenalty)).toFixed(3));
 
-    // لو المستوى معقد + يوجد نموذج أقوى متاح → استخدم الأقوى
-    if (lvl === 'complex' && candidateModels.includes('strong-code') && cls.category === 'code') {
+      // لو المستوى معقد + يوجد نموذج أقوى متاح → استخدم الأقوى
+    if (lvl === 'complex' && candidateModels.includes('strong-code') && (cls.category === 'code' || cls.category === 'vibe')) {
       chosen = 'strong-code';
     }
+
+    // تعديل الثقة بمعدل أخطاء الكود/Vibe (التحديث الجديد)
+    try {
+      const { singleton } = require('./learning/codeErrorLearner');
+      const adj = singleton.adjustConfidence(cls.category, chosen, confidence);
+      // لا نغيّر confidence الأصلي في الرد، لكن نضيف adjustedConfidence للقرار الداخلي
+      // إذا كان errorRate عالي جداً (>0.4) وتوجد بدائل، تجاوز للنموذج الأقل أخطاء
+      if (adj < confidence * 0.6 && candidateModels.length > 1) {
+        const rankedByError = [...candidateModels].sort((a,b) => singleton.getErrorRate(cls.category, a) - singleton.getErrorRate(cls.category, b));
+        if (singleton.getErrorRate(cls.category, rankedByError[0]) < singleton.getErrorRate(cls.category, chosen)) {
+          chosen = rankedByError[0];
+        }
+      }
+    } catch {}
 
     return reply.send({
       category: cls.category,

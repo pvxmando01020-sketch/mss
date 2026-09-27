@@ -1,5 +1,19 @@
 # CHANGELOG — MSS AI Gateway
 
+## 1.1.0 — 2026-09-27 — التعلم من أخطاء الكود والـ Vibe Code
+
+- `src/adapters/codeAnalyzer.js` — يكشف `syntax/security/vibe_mismatch` من ``` blocks + inline code — `errorScore 0..1` + `qualityFromErrors` (0.08 حرج → 0.85 نظيف)
+- `src/learning/codeErrorLearner.js` — `CodeErrorLearner` singleton (`alphaError 0.4`, `alphaVibe 0.35`) — `recordError/recordSuccess/getErrorRate/adjustConfidence` — يحفظ في `code_errors`/`code_error_stats` (Postgres) + in-memory `Map` + `recent 500`
+- `migrations/003_code_errors.sql` — جداول `code_errors` + `code_error_stats` + VIEW `code_error_rates` + فهارس
+- `src/store.js` — أضاف `vibe` إلى `CATEGORIES` (6 فئات) + `DEFAULT_MODELS.vibe='strong-code'` (يتعلم منفصلاً)
+- `src/classifier.js` — أضاف `vibe` في `TREE_WEIGHTS` + قاعدة `vibe code` في `classifyRules`
+- `src/gateway.js` — `adjustConfidence` عبر `errorRate*0.7` + تجاوز للنموذج الأقل أخطاء إذا `confidence*0.6 > adjusted`
+- `src/logger.js` — `estimateQuality` يدعم `codeError/vibeError` بخرائط severity (`critical 0.02/0.05`)
+- `src/config.js` — أضاف `vibe:['strong-code','claude']` في `modelsByCategory`
+- `src/server.js` — `POST /v1/chat/completions` + `POST /v1/conversations/:id/chat` يكتشفان الكود تلقائياً ويحدّثان الـ learner قبل الرد (`autoError` في الرد) — نقاط جديدة: `POST /v1/feedback/code-error`, `/vibe-error`, `/code-success`, `GET /v1/learning/code-stats`, `POST /v1/code/analyze`
+- `flutter` — `gateway_client.dart` (`reportCodeError/reportVibeError/analyzeCode`) + `chat_screen.dart` زر 🐛 + dialog لاختيار type/severity
+- `docs/API.md` — قسم جديد للتعلم من أخطاء الكود — `63/63` اختبار (17 جديد)
+
 ## 1.0.0 — 2026-09-27 — الرحلة 1→4 مكتملة
 
 ### الرحلة الأولى — البنية التحتية (مرحلة 1)

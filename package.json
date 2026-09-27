@@ -1,7 +1,7 @@
 {
   "name": "mss-ai-gateway",
-  "version": "1.0.0",
-  "description": "الرحلة الكاملة 1→4 — AI Chat Gateway (Fastify/Postgres/Redis/S3) + Conversations/Auth + Smart Routing + Moderation + Flutter",
+  "version": "1.1.0",
+  "description": "الرحلة الكاملة 1→5 — AI Chat Gateway (Fastify/Postgres/Redis/S3) + Conversations/Auth + Smart Routing + Moderation + Code/Vibe Error Learning + Flutter",
   "type": "commonjs",
   "main": "src/index.js",
   "exports": {

@@ -1,17 +1,18 @@
 /**
- * classifier.js — تصنيف الأسئلة محليًا (3a → 3d)
+ * classifier.js — تصنيف الأسئلة محليًا (3a → 3d + التحديث الجديد: vibe)
  *
  * 3a: مصنف rule-based أولي (حجم صفر، يعمل بدون ML)
  * 3d: يُستبدل بشجرة قرار صغيرة (decision tree) بأوزان ثابتة مضمنة
  *      مع قواعد احتياطية إذا فشل الاستدلال.
  *
- * الفئات الخمس من الخطة:
- *  code | creative | analysis | retrieval | general
+ * الفئات الآن ست (بعد التحديث الجديد):
+ *  code | vibe | creative | analysis | retrieval | general
+ *  vibe = Vibe Code — كود سريع تفاعلي/جمالي (مختلف عن code الصارم)
  */
 
 const { extractFeatures } = require('./features');
 
-const CATEGORIES = ['code', 'creative', 'analysis', 'retrieval', 'general'];
+const CATEGORIES = ['code', 'vibe', 'creative', 'analysis', 'retrieval', 'general'];
 
 /**
  * أوزان شجرة القرار المضمنة (كيلوبايتات).
@@ -24,6 +25,7 @@ const CATEGORIES = ['code', 'creative', 'analysis', 'retrieval', 'general'];
  */
 const TREE_WEIGHTS = {
   code:      [2.8, 1.9, 1.2, 0.3, -0.2, 1.5, -0.8, -0.4, -1.0],
+  vibe:      [1.9, 1.2, 0.9, 0.5, 0.1, 0.8, 0.3, -0.2, -0.6], // بين code و creative
   creative:  [-1.2, -0.6, -0.3, 0.4, 0.6, -0.9, 2.2, -0.5, -0.7],
   analysis:  [-0.4, -0.2, 1.6, 0.7, 0.1, -0.6, -0.7, 2.4, -0.6],
   retrieval: [-0.8, -0.5, -0.2, -0.9, 0.2, -0.7, -0.6, -0.5, 2.0],
@@ -94,6 +96,11 @@ function classify(input, opts = {}) {
 
 function classifyRules(f) {
   const t = f.text;
+
+  // 0) Vibe Code — كود vibe سريع (واجهات، أنيميشن، تفاعل)
+  if (/(?:^|[^\p{L}\p{N}_])(فايب|vibe|واجهة تفاعلية|أنيميشن|تفاعلي|تصميم واجهة)(?=[^\p{L}\p{N}_]|$)/iu.test(t) || /vibe\s*code|landing\s*page|dashboard.*ui/i.test(t)) {
+    return { category: 'vibe', confidence: 0.88, probs: { vibe: 0.88, general: 0.12 }, method: 'rules' };
+  }
 
   // 1) كود — أعلى أولوية لأن إشاراته مميزة
   if (f.hasCode || f.codeScore > 0.55) return { category: 'code', confidence: 0.92, probs: { code: 0.92, general: 0.08 }, method: 'rules' };

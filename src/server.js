@@ -18,6 +18,8 @@ const { callModel } = require('./adapters/modelAdapter');
 const db = require('./adapters/db');
 const { estimateQuality, applyFeedback } = require('./logger');
 const { pushSummary } = require('./sync');
+const { analyze: analyzeCode, qualityFromErrors } = require('./adapters/codeAnalyzer');
+const { singleton: codeErrorLearner } = require('./learning/codeErrorLearner');
 
 function createStores(opts = {}) {
   const store = opts.store ?? new ScoreStore({}, { alpha: config.routing.alpha, epsilon: config.routing.epsilon });
@@ -166,6 +168,31 @@ async function buildApp(opts = {}) {
       if (post.action === 'block') return reply.send({ ...decision, response: '[تم حجب الرد بسبب السياسة]', blocked: true, latency_ms });
     }
 
+    // — التعلم من أخطاء الكود والـ Vibe Code (التحديث الجديد) —
+    let autoError = null;
+    if (decision.category === 'code' || decision.category === 'vibe' || /```/.test(result.text)) {
+      codeErrorLearner.recordRequest(decision.category, result.model);
+      const analysis = analyzeCode(result.text, { category: decision.category, vibeContext: body.vibe_context || text });
+      if (analysis.hasCode && analysis.errorScore > 0) {
+        const autoQuality = qualityFromErrors(analysis.errorScore);
+        autoError = { errorScore: analysis.errorScore, errors: analysis.errors, autoQuality };
+        await codeErrorLearner.recordError(store, {
+          category: decision.category,
+          model: result.model,
+          errorType: analysis.errors[0]?.type || 'other',
+          severity: analysis.errors[0]?.severity || 'medium',
+          code_snippet: analysis.errors[0]?.snippet,
+          error_message: analysis.errors[0]?.msg,
+          vibe_context: body.vibe_context || null,
+          auto_detected: true,
+          latency_ms,
+          conversation_id: body.conversation_id || null,
+        });
+      } else if (analysis.hasCode) {
+        codeErrorLearner.recordSuccess(store, decision.category, result.model);
+      }
+    }
+
     if (!useDirect && decision.complexity === 'simple') {
       const { hashKey } = require('./cache');
       cache.set(hashKey(text, decision.category, decision.model), result.text);
@@ -221,16 +248,84 @@ async function buildApp(opts = {}) {
       return reply;
     }
 
-    return reply.send({ ...decision, response: result.text, latency_ms, usage: result.usage, fallback: usedFallback || undefined });
+    return reply.send({ ...decision, response: result.text, latency_ms, usage: result.usage, fallback: usedFallback || undefined, autoError });
   });
 
-  // feedback يحسب quality عبر proxies (مرحلة 3b)
+  // — التحديث الجديد: التعلم من أخطاء الكود والـ Vibe Code —
+  fastify.post('/v1/feedback/code-error', async (req, reply) => {
+    const { category, model, errorType, severity, code_snippet, error_message, vibe_context, conversation_id, message_id } = req.body ?? {};
+    if (!model) return reply.code(400).send({ error: 'model is required' });
+    const cat = category || (vibe_context ? 'vibe' : 'code');
+    const sev = ['low','medium','high','critical'].includes(severity) ? severity : 'medium';
+    const result = await codeErrorLearner.recordError(store, {
+      category: cat, model, errorType: errorType || 'other', severity: sev,
+      code_snippet, error_message, vibe_context, auto_detected: false,
+      user_id: req.user?.id || null, conversation_id: conversation_id || null, message_id: message_id || null,
+    });
+    await pushSummary(config, store).catch(() => {});
+    return reply.send({ ok: true, ...result, score: store.get(cat, model), errorRate: codeErrorLearner.getErrorRate(cat, model) });
+  });
+
+  fastify.post('/v1/feedback/vibe-error', async (req, reply) => {
+    const body = req.body ?? {};
+    body.category = 'vibe';
+    body.errorType = body.errorType || 'vibe_mismatch';
+    req.body = body;
+    // إعادة استخدام نفس handler
+    const { category, model, errorType, severity, code_snippet, error_message, vibe_context, conversation_id, message_id } = body;
+    if (!model) return reply.code(400).send({ error: 'model is required' });
+    const result = await codeErrorLearner.recordError(store, {
+      category: 'vibe', model, errorType, severity: severity || 'medium',
+      code_snippet, error_message, vibe_context, auto_detected: false,
+      user_id: req.user?.id || null, conversation_id, message_id,
+    });
+    await pushSummary(config, store).catch(() => {});
+    return reply.send({ ok: true, ...result, score: store.get('vibe', model), errorRate: codeErrorLearner.getErrorRate('vibe', model) });
+  });
+
+  fastify.post('/v1/feedback/code-success', async (req, reply) => {
+    const { category, model } = req.body ?? {};
+    if (!model) return reply.code(400).send({ error: 'model is required' });
+    const cat = category || 'code';
+    codeErrorLearner.recordSuccess(store, cat, model);
+    return reply.send({ ok: true, score: store.get(cat, model), errorRate: codeErrorLearner.getErrorRate(cat, model) });
+  });
+
+  fastify.get('/v1/learning/code-stats', async (req, reply) => {
+    const stats = codeErrorLearner.snapshot();
+    // أضف errorRate لكل نموذج/فئة
+    const rates = {};
+    for (const cat of ['code','vibe']) {
+      rates[cat] = {};
+      for (const m of ['strong-code','claude','fast-cheap','accurate-math']) {
+        rates[cat][m] = codeErrorLearner.getErrorRate(cat, m);
+      }
+    }
+    return reply.send({ ...stats, rates, store: store.summaryForPostgres() });
+  });
+
+  // تحليل كود مباشر (للاختبار)
+  fastify.post('/v1/code/analyze', async (req, reply) => {
+    const { text, category, vibe_context } = req.body ?? {};
+    if (!text) return reply.code(400).send({ error: 'text is required' });
+    const result = analyzeCode(text, { category, vibeContext: vibe_context });
+    return reply.send(result);
+  });
+
+  // feedback يحسب quality عبر proxies (مرحلة 3b) — محدث ليدعم codeError/vibeError
   fastify.post('/v1/feedback/auto', async (req, reply) => {
-    const { category, model, latency_ms, regenerated, editedLength, originalLength, thumbsUp, thumbsDown, manualCorrection, conversation_id, message_id } = req.body ?? {};
+    const { category, model, latency_ms, regenerated, editedLength, originalLength, thumbsUp, thumbsDown, manualCorrection, conversation_id, message_id, codeError, vibeError, errorSeverity } = req.body ?? {};
     if (!category || !model) return reply.code(400).send({ error: 'category and model required' });
-    const quality = estimateQuality({ regenerated, editedLength, originalLength, latency_ms, thumbsUp, thumbsDown });
+    const quality = estimateQuality({ regenerated, editedLength, originalLength, latency_ms, thumbsUp, thumbsDown, codeError, vibeError, errorSeverity });
     const entry = { category, model, quality_score: quality, latency_ms, regenerated, manualCorrection };
     applyFeedback(store, entry);
+    // إذا كان خطأ كود صريح، سجله أيضاً في learner
+    if (codeError || vibeError) {
+      await codeErrorLearner.recordError(store, {
+        category, model, errorType: vibeError ? 'vibe_mismatch' : 'other', severity: errorSeverity || 'medium',
+        auto_detected: false, user_id: req.user?.id || null, conversation_id, message_id,
+      });
+    }
     await db.persistFeedback(config, { ...entry, quality_score: quality }).catch(() => {});
     await pushSummary(config, store).catch(() => {});
     // لو ضمن محادثة، حدّث الرسالة regenerated
@@ -240,7 +335,7 @@ async function buildApp(opts = {}) {
         if (pool) await pool.query('UPDATE messages SET regenerated=$1 WHERE id=$2', [!!regenerated, message_id]);
       } catch {}
     }
-    return reply.send({ ok: true, quality, score: store.get(category, model) });
+    return reply.send({ ok: true, quality, score: store.get(category, model), errorRate: codeErrorLearner.getErrorRate(category, model) });
   });
 
   // تهيئة DB (best-effort) — يشمل 000 + 001 + 002
@@ -464,6 +559,15 @@ function buildStubApp(store, cache, opts) {
         const post = postCheck(result.text, config.moderation);
         if (post.action === 'block') return reply.send({ ...decision, response: '[تم حجب الرد بسبب السياسة]', blocked: true, latency_ms: result.latency_ms });
       }
+      let autoError = null;
+      if (decision.category === 'code' || decision.category === 'vibe' || /```/.test(result.text)) {
+        codeErrorLearner.recordRequest(decision.category, result.model);
+        const analysis = analyzeCode(result.text, { category: decision.category, vibeContext: body.vibe_context || text });
+        if (analysis.hasCode && analysis.errorScore > 0) {
+          autoError = { errorScore: analysis.errorScore, errors: analysis.errors, autoQuality: qualityFromErrors(analysis.errorScore) };
+          await codeErrorLearner.recordError(store, { category: decision.category, model: result.model, errorType: analysis.errors[0]?.type || 'other', severity: analysis.errors[0]?.severity || 'medium', code_snippet: analysis.errors[0]?.snippet, error_message: analysis.errors[0]?.msg, vibe_context: body.vibe_context || null, auto_detected: true });
+        } else if (analysis.hasCode) { codeErrorLearner.recordSuccess(store, decision.category, result.model); }
+      }
       if (!useDirect && decision.complexity === 'simple') {
         const { hashKey } = require('./cache');
         cache.set(hashKey(text, decision.category, decision.model), result.text);
@@ -482,8 +586,8 @@ function buildStubApp(store, cache, opts) {
         const pool = await db.getPool(config);
         if (pool) await pool.query('INSERT INTO gateway_requests(model, prompt, response, latency_ms, status) VALUES($1,$2,$3,$4,$5)', [result.model, text.slice(0,4000), result.text.slice(0,8000), result.latency_ms, 'ok']).catch(()=>{});
       } catch {}
-      if (body.stream) return reply.send({ ...decision, response: result.text, latency_ms: result.latency_ms, streamed: true });
-      return reply.send({ ...decision, response: result.text, latency_ms: result.latency_ms, usage: result.usage });
+      if (body.stream) return reply.send({ ...decision, response: result.text, latency_ms: result.latency_ms, streamed: true, autoError });
+      return reply.send({ ...decision, response: result.text, latency_ms: result.latency_ms, usage: result.usage, autoError });
     });
 
     stub.post('/v1/embeddings', async (req, reply) => {
@@ -493,13 +597,45 @@ function buildStubApp(store, cache, opts) {
       return reply.send({ object: 'list', data: [{ object: 'embedding', embedding: vec, index: 0 }], model: 'mock-embed' });
     });
 
+    stub.post('/v1/feedback/code-error', async (req, reply) => {
+      const { category, model, errorType, severity, code_snippet, error_message, vibe_context } = req.body ?? {};
+      if (!model) return reply.code(400).send({ error: 'model is required' });
+      const cat = category || (vibe_context ? 'vibe' : 'code');
+      const result = await codeErrorLearner.recordError(store, { category: cat, model, errorType: errorType || 'other', severity: severity || 'medium', code_snippet, error_message, vibe_context, auto_detected: false });
+      return reply.send({ ok: true, ...result, score: store.get(cat, model), errorRate: codeErrorLearner.getErrorRate(cat, model) });
+    });
+    stub.post('/v1/feedback/vibe-error', async (req, reply) => {
+      const { model, errorType, severity, code_snippet, error_message, vibe_context } = req.body ?? {};
+      if (!model) return reply.code(400).send({ error: 'model is required' });
+      const result = await codeErrorLearner.recordError(store, { category: 'vibe', model, errorType: errorType || 'vibe_mismatch', severity: severity || 'medium', code_snippet, error_message, vibe_context, auto_detected: false });
+      return reply.send({ ok: true, ...result, score: store.get('vibe', model), errorRate: codeErrorLearner.getErrorRate('vibe', model) });
+    });
+    stub.post('/v1/feedback/code-success', async (req, reply) => {
+      const { category, model } = req.body ?? {};
+      if (!model) return reply.code(400).send({ error: 'model is required' });
+      const cat = category || 'code';
+      codeErrorLearner.recordSuccess(store, cat, model);
+      return reply.send({ ok: true, score: store.get(cat, model), errorRate: codeErrorLearner.getErrorRate(cat, model) });
+    });
+    stub.get('/v1/learning/code-stats', async (req, reply) => {
+      const stats = codeErrorLearner.snapshot();
+      const rates = {};
+      for (const cat of ['code','vibe']) { rates[cat] = {}; for (const m of ['strong-code','claude','fast-cheap','accurate-math']) rates[cat][m] = codeErrorLearner.getErrorRate(cat, m); }
+      return reply.send({ ...stats, rates, store: store.summaryForPostgres() });
+    });
+    stub.post('/v1/code/analyze', async (req, reply) => {
+      const { text, category, vibe_context } = req.body ?? {};
+      if (!text) return reply.code(400).send({ error: 'text is required' });
+      return reply.send(analyzeCode(text, { category, vibeContext: vibe_context }));
+    });
     stub.post('/v1/feedback/auto', async (req, reply) => {
-      const { category, model, latency_ms, regenerated, thumbsUp, thumbsDown, manualCorrection } = req.body ?? {};
+      const { category, model, latency_ms, regenerated, thumbsUp, thumbsDown, manualCorrection, codeError, vibeError, errorSeverity } = req.body ?? {};
       if (!category || !model) return reply.code(400).send({ error: 'category and model required' });
-      const quality = estimateQuality({ regenerated, latency_ms, thumbsUp, thumbsDown });
+      const quality = estimateQuality({ regenerated, latency_ms, thumbsUp, thumbsDown, codeError, vibeError, errorSeverity });
       const entry = { category, model, quality_score: quality, latency_ms, regenerated, manualCorrection };
       applyFeedback(store, entry);
-      return reply.send({ ok: true, quality, score: store.get(category, model) });
+      if (codeError || vibeError) await codeErrorLearner.recordError(store, { category, model, errorType: vibeError ? 'vibe_mismatch' : 'other', severity: errorSeverity || 'medium', auto_detected: false });
+      return reply.send({ ok: true, quality, score: store.get(category, model), errorRate: codeErrorLearner.getErrorRate(category, model) });
     });
 
     // إضافة inject helper لـ GET with query

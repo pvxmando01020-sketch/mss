@@ -11,11 +11,12 @@
  * لا يحتاج RL ثقيل على الهاتف — online update فقط.
  */
 
-const CATEGORIES = ['code', 'creative', 'analysis', 'retrieval', 'general'];
+const CATEGORIES = ['code', 'vibe', 'creative', 'analysis', 'retrieval', 'general'];
 
 // النماذج الافتراضية المبدئية — قابلة للتعديل تلقائيًا من السجل، ليست ثابتة
 const DEFAULT_MODELS = {
   code: 'strong-code',
+  vibe: 'strong-code', // الـ Vibe Code يبدأ بنفس نموذج الكود لكن يتعلم بشكل منفصل
   creative: 'claude',
   analysis: 'accurate-math',
   retrieval: 'fast-cheap',

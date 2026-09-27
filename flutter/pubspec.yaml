@@ -1,7 +1,7 @@
 name: smart_routing_engine
-description: تطبيق موبايل ذكي — الرحلة 1→4: Auth + Conversations + توجيه محلي + طابور offline
+description: تطبيق موبايل ذكي — الرحلة 1→5: Auth + Conversations + توجيه محلي + طابور offline + تعلم من أخطاء الكود/Vibe
 publish_to: none
-version: 1.0.0+1
+version: 1.1.0+2
 environment:
   sdk: ">=3.0.0 <4.0.0"
   flutter: ">=3.16.0"

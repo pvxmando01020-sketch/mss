@@ -55,6 +55,21 @@ class GatewayClient {
     await http.post(_u(path), headers: _headers, body: jsonEncode(payload)).timeout(timeout);
   }
 
+  Future<void> reportCodeError({required String model, String category='code', String errorType='other', String severity='medium', String? codeSnippet, String? errorMessage, String? vibeContext, String? conversationId}) async {
+    await http.post(_u('/v1/feedback/code-error'), headers: _headers, body: jsonEncode({'model':model,'category':category,'errorType':errorType,'severity':severity,'code_snippet':codeSnippet,'error_message':errorMessage,'vibe_context':vibeContext,'conversation_id':conversationId})).timeout(timeout);
+  }
+  Future<void> reportVibeError({required String model, String errorType='vibe_mismatch', String severity='medium', String? codeSnippet, String? errorMessage, String? vibeContext, String? conversationId}) async {
+    await http.post(_u('/v1/feedback/vibe-error'), headers: _headers, body: jsonEncode({'model':model,'errorType':errorType,'severity':severity,'code_snippet':codeSnippet,'error_message':errorMessage,'vibe_context':vibeContext,'conversation_id':conversationId})).timeout(timeout);
+  }
+  Future<void> reportCodeSuccess({required String model, String category='code'}) async {
+    await http.post(_u('/v1/feedback/code-success'), headers: _headers, body: jsonEncode({'model':model,'category':category})).timeout(timeout);
+  }
+  Future<Map<String,dynamic>> analyzeCode(String text, {String? category, String? vibeContext}) async {
+    final res = await http.post(_u('/v1/code/analyze'), headers: _headers, body: jsonEncode({'text':text, if (category!=null) 'category':category, if (vibeContext!=null) 'vibe_context':vibeContext})).timeout(timeout);
+    if (res.statusCode!=200) throw Exception('analyze failed ${res.statusCode}: ${res.body}');
+    return jsonDecode(res.body) as Map<String,dynamic>;
+  }
+
   Future<Map<String, dynamic>> stats() async {
     final res = await http.get(_u('/v1/routing/stats'), headers: _headers).timeout(timeout);
     return jsonDecode(res.body) as Map<String, dynamic>;

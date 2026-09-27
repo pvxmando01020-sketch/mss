@@ -41,6 +41,32 @@ async function ensureSchema(config) {
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_feedback_cat_model ON routing_feedback(category, model);
+    CREATE TABLE IF NOT EXISTS code_errors (
+      id SERIAL PRIMARY KEY,
+      user_id UUID,
+      conversation_id UUID,
+      message_id UUID,
+      category TEXT NOT NULL CHECK (category IN ('code','vibe','creative','analysis','retrieval','general')),
+      model TEXT NOT NULL,
+      error_type TEXT NOT NULL CHECK (error_type IN ('syntax','runtime','logic','security','style','vibe_mismatch','test_fail','other')),
+      severity TEXT NOT NULL DEFAULT 'medium' CHECK (severity IN ('low','medium','high','critical')),
+      code_snippet TEXT,
+      error_message TEXT,
+      vibe_context TEXT,
+      auto_detected BOOLEAN DEFAULT FALSE,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS code_error_stats (
+      model TEXT NOT NULL,
+      category TEXT NOT NULL,
+      total_errors INTEGER DEFAULT 0,
+      syntax_errors INTEGER DEFAULT 0,
+      runtime_errors INTEGER DEFAULT 0,
+      vibe_errors INTEGER DEFAULT 0,
+      last_error_at TIMESTAMPTZ,
+      error_rate DOUBLE PRECISION DEFAULT 0,
+      PRIMARY KEY (model, category)
+    );
   `;
   await pool.query(sql);
   return true;

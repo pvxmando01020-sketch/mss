@@ -14,13 +14,22 @@
 
 /**
  * يقدّر quality من الإشارات السلوكية
- * @param {{regenerated?:boolean, editedLength?:number, originalLength?:number, latency_ms?:number, thumbsUp?:boolean, thumbsDown?:boolean}} signals
+ * @param {{regenerated?:boolean, editedLength?:number, originalLength?:number, latency_ms?:number, thumbsUp?:boolean, thumbsDown?:boolean, codeError?:boolean, vibeError?:boolean, errorSeverity?:string}} signals
  * @returns {number} 0..1
  */
 function estimateQuality(signals = {}) {
   if (signals.thumbsDown) return 0.15;
   if (signals.thumbsUp) return 0.92;
   if (signals.regenerated) return 0.25;
+  // أخطاء الكود والـ Vibe Code — عقاب قوي مباشر (التحديث الجديد)
+  if (signals.codeError) {
+    const sev = { low: 0.35, medium: 0.18, high: 0.08, critical: 0.02 };
+    return sev[signals.errorSeverity] ?? 0.12;
+  }
+  if (signals.vibeError) {
+    const sev = { low: 0.4, medium: 0.18, high: 0.1, critical: 0.05 };
+    return sev[signals.errorSeverity] ?? 0.18;
+  }
 
   let q = 0.72; // افتراضي محايد-إيجابي
 

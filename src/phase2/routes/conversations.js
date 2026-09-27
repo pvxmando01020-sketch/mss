@@ -76,15 +76,24 @@ async function conversationRoutes(fastify, opts) {
     const decision = route(text, store, { cache, models: (opts.config || config).modelsByCategory });
 
     const { callModel } = require('../../adapters/modelAdapter');
+    const { analyze, qualityFromErrors } = require('../../adapters/codeAnalyzer');
+    const { singleton } = require('../../learning/codeErrorLearner');
     const t0 = Date.now();
     const result = await callModel(decision.model, text);
     const latency_ms = Date.now() - t0;
+    singleton.recordRequest(decision.category, result.model);
+    const analysis = analyze(result.text, { category: decision.category, vibeContext: req.body?.vibe_context || text });
+    let autoError = null;
+    if (analysis.hasCode && analysis.errorScore > 0) {
+      autoError = { errorScore: analysis.errorScore, errors: analysis.errors, autoQuality: qualityFromErrors(analysis.errorScore) };
+      await singleton.recordError(store, { category: decision.category, model: result.model, errorType: analysis.errors[0]?.type || 'other', severity: analysis.errors[0]?.severity || 'medium', code_snippet: analysis.errors[0]?.snippet, error_message: analysis.errors[0]?.msg, vibe_context: req.body?.vibe_context || null, auto_detected: true, conversation_id: conv.id });
+    } else if (analysis.hasCode) { singleton.recordSuccess(store, decision.category, result.model); }
 
     const assistantMsg = await convService.addMessage(config, conv.id, {
       role: 'assistant', content: result.text, model: decision.model, category: decision.category, confidence: decision.confidence, latency_ms,
     });
 
-    return reply.send({ ...decision, response: result.text, latency_ms, message: assistantMsg, conversation_id: conv.id });
+    return reply.send({ ...decision, response: result.text, latency_ms, message: assistantMsg, conversation_id: conv.id, autoError });
   });
 }
 

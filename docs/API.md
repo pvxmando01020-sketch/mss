@@ -53,9 +53,26 @@ POST   /v1/uploads                          {filename,mime,dataBase64} → {key}
 
 ```http
 POST /v1/route            {text, overrideModel?} → {category, model, confidence, complexity}
-POST /v1/feedback/auto    {category, model, thumbsUp?, regenerated?, latency_ms?} → {quality, score}
+POST /v1/feedback/auto    {category, model, thumbsUp?, regenerated?, latency_ms?, codeError?, vibeError?} → {quality, score, errorRate}
 GET  /v1/routing/stats    → {summary, totalEvents, regenRate}
 ```
+
+## التعلم من أخطاء الكود والـ Vibe Code (التحديث الجديد)
+
+```http
+POST /v1/feedback/code-error    {model, category?, errorType?, severity?, code_snippet?, vibe_context?} → {quality, score, errorRate}
+POST /v1/feedback/vibe-error    {model, severity?, vibe_context?, code_snippet?} → {quality, score, errorRate}  # vibe افتراضي
+POST /v1/feedback/code-success  {model, category?} → {ok, score, errorRate}
+GET  /v1/learning/code-stats    → {counts, recent, rates:{code:{},vibe:{}}, store}
+POST /v1/code/analyze           {text, category?, vibe_context?} → {hasCode, errors:[{type, severity, msg}], errorScore, vibeScore}
+```
+
+- `category` = `code` | `vibe` | `creative` | `analysis` | `retrieval` | `general` — الـ **vibe** للكود التفاعلي الجمالي.
+- `errorType` = `syntax` | `runtime` | `logic` | `security` | `style` | `vibe_mismatch` | `test_fail` | `other`
+- `severity` = `low` | `medium` | `high` | `critical` — يحدد `alpha` في `CodeErrorLearner` (0.4 للكود، 0.35 للـ vibe) وجودة العقاب
+- `POST /v1/chat/completions` الآن يكتشف الكود تلقائياً عبر `codeAnalyzer` (``` + security/vibe patterns) ويحدّث `errorRate` قبل الرد → `autoError:{errorScore, errors, autoQuality}` في الرد إذا وُجدت أخطاء
+- `Flutter` — زر `🐛` في كل رد كود يفتح dialog للإبلاغ (نوع + خطورة + مقتطف)
+- الجداول: `code_errors` + `code_error_stats` (migration `003_code_errors.sql`) + VIEW `code_error_rates`
 
 ## الإدارة (مرحلة 1+2)
 

@@ -50,6 +50,7 @@ module.exports = {
     } catch {}
     return {
       code: ['strong-code', 'fast-cheap'],
+      vibe: ['strong-code', 'claude'],
       creative: ['claude', 'fast-cheap'],
       analysis: ['accurate-math', 'claude'],
       retrieval: ['fast-cheap'],

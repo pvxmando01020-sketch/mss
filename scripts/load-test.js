@@ -52,7 +52,8 @@ async function run({ users = 20, perUser = 5 } = {}) {
 
   // تحقق من metrics
   const m = await app.inject({ method: 'GET', url: '/metrics' });
-  console.log(`\n  /metrics → ${m.statusCode} (${m.body.slice(0, 60)}...)`);
+  const mBody = typeof m.body === 'string' ? m.body : JSON.stringify(m.body ?? '');
+  console.log(`\n  /metrics → ${m.statusCode} (${mBody.slice(0, 60)}...)`);
 }
 
 const args = process.argv.slice(2);
