@@ -1,0 +1,27 @@
+name: CI — MSS Gateway 1→4
+
+on: [push, pull_request]
+
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm test
+      - run: node scripts/benchmark.js
+      - run: node examples/full-journey.js
+
+  flutter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: '3.22.x' }
+      - run: flutter pub get
+        working-directory: flutter
+      - run: flutter test
+        working-directory: flutter
+      - run: flutter analyze
+        working-directory: flutter

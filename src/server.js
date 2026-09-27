@@ -65,7 +65,7 @@ async function buildApp(opts = {}) {
     await fastify.register(metricsRoutes, { config });
   } catch {}
 
-  // —— المرحلة 2: Auth + Conversations + Uploads ——
+  // —— المرحلة 2: Auth + Conversations + Uploads + Quota + Admin ——
   try {
     const { authRoutes } = require('./phase2/routes/auth');
     await fastify.register(authRoutes, { config });
@@ -79,6 +79,10 @@ async function buildApp(opts = {}) {
     await fastify.register(uploadRoutes, { config });
     // دعم multipart لو متوفر
     try { await fastify.register(require('@fastify/multipart'), { limits: { fileSize: 20 * 1024 * 1024 } }); } catch {}
+  } catch {}
+  try {
+    const { adminRoutes } = require('./phase1/routes/admin');
+    await fastify.register(adminRoutes, { config, store });
   } catch {}
 
   // —— المرحلة 3: التوجيه الذكي ——
