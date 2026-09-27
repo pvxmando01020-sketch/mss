@@ -151,12 +151,13 @@ GET /v1/routing/stats
 
 ---
 
-## 9. Flutter (flutter/lib/smart_router.dart)
+## 9. Flutter — تطبيق كامل
 
-نفس المنطق بـ Dart:
-- `extractFeatures()` / `classify()` / `complexityFor()` / `ScoreStore` / `route()`
-- يعمل offline بالكامل؛ `ScoreStore` يحفظ في `SharedPreferences`/`SQLite` (في المثال في الذاكرة).
-- `hash` و `cache` و `queue` يمكن إضافتهم بنفس نمط `cache.js`.
+- `lib/smart_router.dart` — نفس المنطق بـ Dart (offline)
+- `lib/main.dart` + `lib/services/local_store.dart` (ScoreStore + تثبيت نموذج + OfflineQueue في SharedPreferences) + `lib/services/gateway_client.dart`
+- `lib/screens/chat_screen.dart` — محادثة + `widgets/routing_badge.dart` ("تم اختيار Claude — ...") + 👍👎 + إعادة توليد + طابور offline
+- `lib/screens/settings_screen.dart` — تثبيت نموذج لفئة (تجاوز كامل) + إحصائيات Postgres
+- `test/smart_router_test.dart` — 5 اختبارات Dart
 
 ---
 
@@ -173,10 +174,10 @@ GET /v1/routing/stats
 | المرحلة | المحتوى | الحالة |
 |---|---|---|
 | 3a | ميزات + مصنف rule-based | ✅ |
-| 3b | سجل أداء + bandit + Postgres summary | ✅ |
-| 3c | Flutter + Gateway + offline queue | ✅ (النواة) |
-| 3d | شجرة قرار مدرّبة + تعلم تدريجي | ✅ (TREE_WEIGHTS + online update) |
-| 4 | اختبار بطارية/ذاكرة + إعادة النظر في طبقة الإشراف (moderation) كخطوة موازية منفصلة | ⏭ |
+| 3b | سجل أداء + bandit + Postgres summary + logger proxies | ✅ |
+| 3c | تطبيق Flutter كامل (chat + settings + OfflineQueue + Gateway client) + خادم Fastify كامل | ✅ |
+| 3d | شجرة قرار مدرّبة + تعلم تدريجي (TREE_WEIGHTS + online update) | ✅ |
+| 4 | اختبار بطارية/ذاكرة (`scripts/benchmark.js`) + طبقة إشراف موازية (`src/moderation.js`) | ✅ |
 
 تحديات محلولة من البنية الحالية: retry/fallback بين النماذج موجود في Gateway؛ يبقى طابور محلي في Flutter فقط.
 

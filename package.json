@@ -1,7 +1,7 @@
 {
   "name": "mss-smart-routing-engine",
-  "version": "0.3.0",
-  "description": "المرحلة 3 — محرك التوجيه الذكي (Smart Routing Engine) لبوابة AI Chat Gateway — يعمل محليًا أولاً فوق Fastify/Postgres/Redis/S3",
+  "version": "0.4.0",
+  "description": "المرحلة 3+4 — محرك التوجيه الذكي فوق Fastify/Postgres/Redis/S3 + تطبيق Flutter + طبقة إشراف موازية",
   "type": "commonjs",
   "main": "src/index.js",
   "exports": {
@@ -11,15 +11,22 @@
     "./classifier": "./src/classifier.js",
     "./store": "./src/store.js",
     "./cache": "./src/cache.js",
-    "./gateway": "./src/gateway.js"
+    "./gateway": "./src/gateway.js",
+    "./server": "./src/server.js",
+    "./moderation": "./src/moderation.js",
+    "./logger": "./src/logger.js"
   },
   "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
     "test": "node --test tests/**/*.test.js",
     "test:verbose": "node --test --test-reporter=spec tests/**/*.test.js",
+    "benchmark": "node scripts/benchmark.js",
     "example": "node examples/gateway-example.js",
-    "lint": "node --check src/*.js"
+    "lint": "node --check src/*.js",
+    "migrate": "psql $DATABASE_URL -f migrations/001_routing.sql"
   },
-  "keywords": ["ai-gateway", "smart-routing", "flutter", "fastify", "bandit", "on-device"],
+  "keywords": ["ai-gateway", "smart-routing", "flutter", "fastify", "bandit", "on-device", "moderation"],
   "license": "MIT",
   "engines": { "node": ">=18" }
 }

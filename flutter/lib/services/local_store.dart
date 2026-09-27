@@ -1,0 +1,118 @@
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../smart_router.dart' as router;
+
+/// LocalStore — يغلف ScoreStore + إعدادات المستخدم + OfflineQueue
+/// يبقى على الجهاز بالكامل (لا يُرسل القطيع/المفاتيح).
+class LocalStore extends ChangeNotifier {
+  late router.ScoreStore scoreStore;
+  Map<String, String> pinnedModels = {}; // { category: model } — تجاوز كامل للتوجيه
+  final List<Map<String, dynamic>> _offlineQueue = [];
+  static const _kStoreKey = 'routing_store_v1';
+  static const _kPinnedKey = 'pinned_models_v1';
+  static const _kQueueKey = 'offline_queue_v1';
+
+  bool _ready = false;
+  bool get ready => _ready;
+
+  Future<void> init() async {
+    scoreStore = router.ScoreStore();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_kStoreKey);
+      if (raw != null) {
+        final data = jsonDecode(raw) as Map<String, dynamic>;
+        // استرجاع الأوزان
+        if (data['scores'] != null) {
+          for (final cat in (data['scores'] as Map).keys) {
+            for (final m in (data['scores'][cat] as Map).keys) {
+              final v = (data['scores'][cat][m] as num).toDouble();
+              scoreStore.scores[cat]?[m] = v;
+            }
+          }
+        }
+        if (data['counts'] != null) {
+          for (final cat in (data['counts'] as Map).keys) {
+            for (final m in (data['counts'][cat] as Map).keys) {
+              scoreStore.counts[cat]?[m] = (data['counts'][cat][m] as num).toInt();
+            }
+          }
+        }
+      }
+      final pinned = prefs.getString(_kPinnedKey);
+      if (pinned != null) pinnedModels = Map<String, String>.from(jsonDecode(pinned));
+      final q = prefs.getString(_kQueueKey);
+      if (q != null) _offlineQueue.addAll(List<Map<String, dynamic>>.from(jsonDecode(q)));
+    } catch (_) {}
+    _ready = true;
+    notifyListeners();
+  }
+
+  Future<void> _persist() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kStoreKey, jsonEncode(scoreStore.summary()));
+      await prefs.setString(_kPinnedKey, jsonEncode(pinnedModels));
+      await prefs.setString(_kQueueKey, jsonEncode(_offlineQueue));
+    } catch (_) {}
+  }
+
+  // قرار التوجيه — محلي أولاً، مع احترام التثبيت اليدوي
+  Map<String, dynamic> decide(String text) {
+    final r = router.route(text, scoreStore);
+    final pinned = pinnedModels[r['category'] as String];
+    if (pinned != null) {
+      r['model'] = pinned;
+      r['pinned'] = true;
+    }
+    return r;
+  }
+
+  Future<void> recordFeedback(String category, String model, double quality,
+      {int? latencyMs, bool regenerated = false, bool manualCorrection = false}) async {
+    scoreStore.update(category, model, quality,
+        latencyMs: latencyMs, regenerated: regenerated, manualCorrection: manualCorrection);
+    await _persist();
+    notifyListeners();
+  }
+
+  Future<void> pinModel(String category, String? model) async {
+    if (model == null) {
+      pinnedModels.remove(category);
+    } else {
+      pinnedModels[category] = model;
+    }
+    await _persist();
+    notifyListeners();
+  }
+
+  // طابور offline
+  List<Map<String, dynamic>> get queue => List.unmodifiable(_offlineQueue);
+
+  Future<void> enqueue(String text, Map<String, dynamic> meta) async {
+    _offlineQueue.add({'id': DateTime.now().millisecondsSinceEpoch.toString(), 'text': text, 'meta': meta, 'attempts': 0, 'createdAt': DateTime.now().toIso8601String()});
+    if (_offlineQueue.length > 100) _offlineQueue.removeAt(0);
+    await _persist();
+    notifyListeners();
+  }
+
+  Future<Map<String, dynamic>?> dequeue() async {
+    if (_offlineQueue.isEmpty) return null;
+    final item = _offlineQueue.removeAt(0);
+    await _persist();
+    notifyListeners();
+    return item;
+  }
+
+  Future<void> markFailed(String id) async {
+    final idx = _offlineQueue.indexWhere((e) => e['id'] == id);
+    if (idx == -1) return;
+    _offlineQueue[idx]['attempts'] = (_offlineQueue[idx]['attempts'] as int) + 1;
+    if (_offlineQueue[idx]['attempts'] >= 5) _offlineQueue.removeAt(idx);
+    await _persist();
+    notifyListeners();
+  }
+
+  Map<String, dynamic> summary() => scoreStore.summary();
+}
