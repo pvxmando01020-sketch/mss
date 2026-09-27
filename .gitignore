@@ -1,3 +1,21 @@
+### Node / Smart Routing Engine ###
+node_modules/
+npm-debug.log*
+coverage/
+.nyc_output/
+
+### Flutter / Dart ###
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+*.lock
+
+### Env ###
+.env
+.env.local
+
 ### AL ###
 #Template for AL projects for Dynamics 365 Business Central
 #launch.json folder

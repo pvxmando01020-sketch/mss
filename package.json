@@ -1,0 +1,25 @@
+{
+  "name": "mss-smart-routing-engine",
+  "version": "0.3.0",
+  "description": "المرحلة 3 — محرك التوجيه الذكي (Smart Routing Engine) لبوابة AI Chat Gateway — يعمل محليًا أولاً فوق Fastify/Postgres/Redis/S3",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./router": "./src/router.js",
+    "./features": "./src/features.js",
+    "./classifier": "./src/classifier.js",
+    "./store": "./src/store.js",
+    "./cache": "./src/cache.js",
+    "./gateway": "./src/gateway.js"
+  },
+  "scripts": {
+    "test": "node --test tests/**/*.test.js",
+    "test:verbose": "node --test --test-reporter=spec tests/**/*.test.js",
+    "example": "node examples/gateway-example.js",
+    "lint": "node --check src/*.js"
+  },
+  "keywords": ["ai-gateway", "smart-routing", "flutter", "fastify", "bandit", "on-device"],
+  "license": "MIT",
+  "engines": { "node": ">=18" }
+}
