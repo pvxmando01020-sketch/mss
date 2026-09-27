@@ -12,6 +12,14 @@ class LocalStore extends ChangeNotifier {
   static const _kStoreKey = 'routing_store_v1';
   static const _kPinnedKey = 'pinned_models_v1';
   static const _kQueueKey = 'offline_queue_v1';
+  static const _kTokenKey = 'auth_token_v1';
+  static const _kUserKey = 'auth_user_v1';
+
+  String? _token;
+  Map<String, dynamic>? _user;
+  String? get token => _token;
+  Map<String, dynamic>? get user => _user;
+  bool get isLoggedIn => _token != null && _user != null;
 
   bool _ready = false;
   bool get ready => _ready;
@@ -44,8 +52,31 @@ class LocalStore extends ChangeNotifier {
       if (pinned != null) pinnedModels = Map<String, String>.from(jsonDecode(pinned));
       final q = prefs.getString(_kQueueKey);
       if (q != null) _offlineQueue.addAll(List<Map<String, dynamic>>.from(jsonDecode(q)));
+      _token = prefs.getString(_kTokenKey);
+      final u = prefs.getString(_kUserKey);
+      if (u != null) _user = Map<String,dynamic>.from(jsonDecode(u));
     } catch (_) {}
     _ready = true;
+    notifyListeners();
+  }
+
+  Future<void> setAuth(String token, Map<String,dynamic> user) async {
+    _token = token; _user = user;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kTokenKey, token);
+      await prefs.setString(_kUserKey, jsonEncode(user));
+    } catch (_) {}
+    notifyListeners();
+  }
+
+  Future<void> logout() async {
+    _token = null; _user = null;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_kTokenKey);
+      await prefs.remove(_kUserKey);
+    } catch (_) {}
     notifyListeners();
   }
 

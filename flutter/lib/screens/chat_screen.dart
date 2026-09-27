@@ -29,7 +29,12 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _gw = GatewayClient(baseUrl: _gatewayUrl);
+    final store = context.read<LocalStore>();
+    _gw = GatewayClient(baseUrl: _gatewayUrl, authToken: store.token);
+    // تحديث التوكن عند تغيّر حالة المصادقة
+    store.addListener(() {
+      if (mounted) _gw.setAuthToken(store.token);
+    });
   }
 
   Future<void> _send() async {
@@ -97,6 +102,8 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(
         title: const Text('MSS — التوجيه الذكي'),
         actions: [
+          if (store.isLoggedIn) Chip(label: Text(store.user?['email']?.toString().split('@').first ?? ''), avatar: const Icon(Icons.person, size: 16))
+          else TextButton(onPressed: () => Navigator.pushNamed(context, '/auth'), child: const Text('دخول')),
           if (store.queue.isNotEmpty)
             Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Chip(label: Text('طابور: ${store.queue.length}'), avatar: const Icon(Icons.cloud_off, size: 16))),
           IconButton(icon: const Icon(Icons.settings), onPressed: () => Navigator.pushNamed(context, '/settings')),

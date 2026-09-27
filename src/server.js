@@ -52,15 +52,18 @@ async function buildApp(opts = {}) {
     fastify.addHook('preHandler', await optionalAuth(config));
   } catch {}
 
-  // —— المرحلة 1: الصحة والنماذج ——
+  // —— المرحلة 1: الصحة والنماذج والمقاييس ——
   try {
     const { healthRoutes } = require('./phase1/routes/health');
     await fastify.register(healthRoutes, { config });
   } catch (e) {
-    // fallback inline
-    fastify.get('/health', async () => ({ ok: true, version: '0.4.0', phase: '1+2+3+4' }));
+    fastify.get('/health', async () => ({ ok: true, version: '1.0.0', phase: '1+2+3+4' }));
     fastify.get('/v1/models', async () => ({ modelsByCategory: config.modelsByCategory }));
   }
+  try {
+    const { metricsRoutes } = require('./phase1/routes/metrics');
+    await fastify.register(metricsRoutes, { config });
+  } catch {}
 
   // —— المرحلة 2: Auth + Conversations + Uploads ——
   try {
@@ -356,10 +359,14 @@ function buildStubApp(store, cache, opts) {
 
   // سجل مباشرة كل المسارات المطلوبة للـ stub
   return (async () => {
-    // health fallback (سيُستبدل بـ healthRoutes لو سُجل)
-    stub.get('/health', async (req, reply) => reply.send({ ok: true, version: '0.4.0-stub', phase: '1+2+3+4' }));
+    // health fallback
+    stub.get('/health', async (req, reply) => reply.send({ ok: true, version: '1.0.0-stub', phase: '1+2+3+4' }));
     stub.get('/ready', async (req, reply) => reply.send({ ok: true, checks: { postgres: 'memory-fallback', redis: 'memory-fallback' } }));
     stub.get('/v1/models', async (req, reply) => reply.send({ modelsByCategory: config.modelsByCategory, adapters: require('./adapters/modelAdapter').adapters }));
+    stub.get('/metrics', async (req, reply) => {
+      reply.header('Content-Type', 'text/plain');
+      return reply.send('# HELP mss_uptime_seconds Uptime\nmss_uptime_seconds 123\n');
+    });
 
     // optionalAuth hook للـ stub
     try {

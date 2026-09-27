@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'services/local_store.dart';
-import 'screens/chat_screen.dart';
-import 'screens/settings_screen.dart';
+import 'screens/auth_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,6 +25,7 @@ class MyApp extends StatelessWidget {
         darkTheme: ThemeData(useMaterial3: true, colorSchemeSeed: const Color(0xFF1E3A8A), brightness: Brightness.dark),
         routes: {
           '/': (_) => const ChatScreen(),
+          '/auth': (_) => const AuthScreen(),
           '/settings': (_) => const SettingsScreen(),
         },
       ),
