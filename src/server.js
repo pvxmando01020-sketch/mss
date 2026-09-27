@@ -52,6 +52,12 @@ async function buildApp(opts = {}) {
     fastify.addHook('preHandler', await optionalAuth(config));
   } catch {}
 
+  // rate limiting عام (مرحلة 1) — 120 طلب/دقيقة للـ IP
+  try {
+    const { rateLimit } = require('./phase1/middleware/rateLimit');
+    fastify.addHook('preHandler', rateLimit({ windowMs: 60_000, max: 120 }));
+  } catch {}
+
   // —— المرحلة 1: الصحة والنماذج والمقاييس ——
   try {
     const { healthRoutes } = require('./phase1/routes/health');
@@ -98,6 +104,17 @@ async function buildApp(opts = {}) {
     const body = req.body || {};
     const text = String(body.text ?? body.prompt ?? body.message ?? '').trim();
     if (!text) return reply.code(400).send({ error: 'text is required' });
+
+    // حصص (مرحلة 2) — تحقق قبل المعالجة
+    if (req.user?.id) {
+      try {
+        const { checkQuota } = require('./phase2/services/quotaService');
+        const quota = req.user.quota_daily || 1000;
+        await checkQuota(config, req.user.id, quota);
+      } catch (qErr) {
+        if (qErr.statusCode === 429) return reply.code(429).send({ error: 'quota_exceeded', used: qErr.used, quota: qErr.quota });
+      }
+    }
 
     if (config.moderation.enabled) {
       const pre = preCheck(text, config.moderation);
@@ -152,6 +169,11 @@ async function buildApp(opts = {}) {
     if (!useDirect && decision.complexity === 'simple') {
       const { hashKey } = require('./cache');
       cache.set(hashKey(text, decision.category, decision.model), result.text);
+    }
+
+    // تحديث الحصص بعد النجاح (مرحلة 2)
+    if (req.user?.id) {
+      try { const { incUsage } = require('./phase2/services/quotaService'); await incUsage(config, req.user.id, result.usage?.prompt_tokens || 0); } catch {}
     }
 
     // حفظ في المحادثة (مرحلة 2) لو conversation_id مُرسل
@@ -372,11 +394,15 @@ function buildStubApp(store, cache, opts) {
       return reply.send('# HELP mss_uptime_seconds Uptime\nmss_uptime_seconds 123\n');
     });
 
-    // optionalAuth hook للـ stub
+    // optionalAuth + rateLimit للـ stub
     try {
       const { optionalAuth } = require('./phase2/middleware/jwt');
       const hook = await optionalAuth(config);
       stub.addHook('preHandler', hook);
+    } catch {}
+    try {
+      const { rateLimit } = require('./phase1/middleware/rateLimit');
+      stub.addHook('preHandler', rateLimit({ windowMs: 60_000, max: 120 }));
     } catch {}
 
     // سجل كل plugins — auth, conversations, uploads, smartRouter
@@ -394,11 +420,19 @@ function buildStubApp(store, cache, opts) {
       persistSummary: async (s) => db.persistSummary(config, s),
     });
 
-    // main smart chat للـ stub (موحد مرحلة 1+3) — يدعم conversation_id لحفظ السجل (مرحلة 2)
+    // main smart chat للـ stub (موحد 1+3) — يدعم quota + conversation_id
     stub.post('/v1/chat/completions', async (req, reply) => {
       const body = req.body || {};
       const text = String(body.text ?? body.prompt ?? body.message ?? '').trim();
       if (!text) return reply.code(400).send({ error: 'text is required' });
+      if (req.user?.id) {
+        try {
+          const { checkQuota } = require('./phase2/services/quotaService');
+          await checkQuota(config, req.user.id, req.user.quota_daily || 1000);
+        } catch (qErr) {
+          if (qErr.statusCode === 429) return reply.code(429).send({ error: 'quota_exceeded', used: qErr.used, quota: qErr.quota });
+        }
+      }
       if (config.moderation.enabled) {
         const pre = preCheck(text, config.moderation);
         if (pre.action === 'block') return reply.code(400).send({ error: 'blocked', reason: pre.reason });
@@ -440,6 +474,9 @@ function buildStubApp(store, cache, opts) {
           const conv = await convService.getConversation(config, body.conversation_id);
           if (conv) await convService.addMessage(config, body.conversation_id, { role: 'assistant', content: result.text, model: result.model, category: decision.category, confidence: decision.confidence, latency_ms: result.latency_ms });
         } catch {}
+      }
+      if (req.user?.id) {
+        try { const { incUsage } = require('./phase2/services/quotaService'); await incUsage(config, req.user.id, result.usage?.prompt_tokens || 0); } catch {}
       }
       try {
         const pool = await db.getPool(config);

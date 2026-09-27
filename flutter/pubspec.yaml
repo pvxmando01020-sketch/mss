@@ -1,7 +1,7 @@
 name: smart_routing_engine
-description: تطبيق موبايل ذكي للمرحلة 3 — توجيه محلي أولاً + Gateway + طابور offline
+description: تطبيق موبايل ذكي — الرحلة 1→4: Auth + Conversations + توجيه محلي + طابور offline
 publish_to: none
-version: 0.4.0+1
+version: 1.0.0+1
 environment:
   sdk: ">=3.0.0 <4.0.0"
   flutter: ">=3.16.0"

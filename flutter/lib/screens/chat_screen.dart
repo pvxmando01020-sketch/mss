@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/local_store.dart';
 import '../services/gateway_client.dart';
+import '../services/offline_sync.dart';
 import '../widgets/routing_badge.dart';
 
 class ChatMessage {
@@ -26,15 +27,23 @@ class _ChatScreenState extends State<ChatScreen> {
   String _gatewayUrl = 'http://localhost:3000';
   late GatewayClient _gw;
 
+  late OfflineSync _sync;
   @override
   void initState() {
     super.initState();
     final store = context.read<LocalStore>();
     _gw = GatewayClient(baseUrl: _gatewayUrl, authToken: store.token);
+    _sync = OfflineSync(store: store, gw: _gw)..start();
     // تحديث التوكن عند تغيّر حالة المصادقة
     store.addListener(() {
       if (mounted) _gw.setAuthToken(store.token);
     });
+  }
+
+  @override
+  void dispose() {
+    _sync.stop();
+    super.dispose();
   }
 
   Future<void> _send() async {

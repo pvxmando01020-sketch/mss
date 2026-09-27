@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'services/local_store.dart';
+import 'services/gateway_client.dart';
+import 'services/offline_sync.dart';
 import 'screens/auth_screen.dart';
 
 void main() async {
