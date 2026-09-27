@@ -1,215 +1,236 @@
-# ARCHITECTURE — Smart Routing Engine (مرحلة 3)
+# ARCHITECTURE — AI Chat Gateway — الرحلة 1 → 4
 
-وثيقة معمارية تنفيذية للخطة الموحدة. كل القرارات هنا مربوطة بالبنية الحالية Fastify + Postgres/Redis/S3.
+وثيقة معمارية تنفيذية كاملة. الرحلتان 1 و 2 هما الأساس الذي تبنى عليه الرحلتان 3 و 4.
 
 ---
 
-## 1. المعمارية العامة (4 طبقات)
+## 0. نظرة عامة — الرحلات الأربع
+
+| الرحلة | المرحلة | الهدف | المخرجات |
+|---|---|---|---|
+| الأولى | 1 | البنية التحتية: Fastify + Postgres/Redis/S3 + محول موحد | `migrations/000`, `phase1/*`, `adapters/*` |
+| الثانية | 2 | التطبيق: Auth + Conversations + Uploads | `migrations/002`, `phase2/*` |
+| الثالثة | 3 | الذكاء: توجيه محلي + bandit + كاش + OfflineQueue | `features`, `classifier`, `store`, `cache`, `gateway` |
+| الرابعة | 4 | القياس والحماية: Benchmark + Moderation موازٍ | `scripts/benchmark`, `moderation` |
 
 ```
-[Flutter App — Local Pre-Processor]
-  │  extractFeatures() + classify() + complexity() + LocalCache + shouldBypassModel()
-  │  ScoreStore (SQLite على الجهاز — هنا JSON/ذاكرة للتبسيط)
-  │  OfflineQueue (رسائل غير مرسلة)
+[Flutter App — Local Pre-Processor]                     ← مرحلة 3
+  │  extractFeatures + classify + complexity + cache
+  │  ScoreStore (SQLite/SharedPrefs) + OfflineQueue
   ▼
-[قرار التوجيه — محلي أولاً]
-  │  route(text, store, {models, cache}) → {category, complexity, model, confidence, key}
-  │  fallback: إذا غير متأكد → اسأل Gateway
+[قرار التوجيه — محلي أولاً]                              ← مرحلة 3
+  │  route(text) → {category, model, confidence}
   ▼
-[API Gateway — Fastify]
-  │  POST /v1/route → buildRouteHandler()
-  │  محول النموذج → Claude / Gemini / Kimi / ...
-  │  إعادة محاولة + fallback بين النماذج (موجود أصلاً)
+[API Gateway — Fastify src/server.js]                   ← مرحلة 1 + 2
+  │  Auth (JWT) + Conversations + Uploads
+  │  POST /v1/route, /v1/chat/completions (+ conversation_id)
+  │  محول النماذج → Claude/Gemini/Kimi + retry/fallback
   │  S3 للملفات، Redis للكاش الساخن، Postgres للملخصات
   ▼
-[Performance Logger]
-   │  POST /v1/feedback {category, model, quality, latency_ms, regenerated, manualCorrection}
-   │  ScoreStore.update() → (1-α)*score + α*quality
-   │  summaryForPostgres() → مزامنة دورية (best-effort)
+[Performance Logger]                                    ← مرحلة 3b
+  │  POST /v1/feedback/auto → estimateQuality → ScoreStore.update
+  ▼
+[Moderation — طبقة موازية]                               ← مرحلة 4
+   │  preCheck/postCheck — لا تحجب التوجيه
 ```
 
-**لماذا Flutter؟** نفس ستاك تطبيق التحكم لبوت التداول → تقليل تعدد التقنيات. React Native مقبول لو الفريق أكثر خبرة، لا يوجد سبب تقني يرجحه.
-
 ---
 
-## 2. استخراج الميزات (features.js)
+## 1. الرحلة الأولى — البنية التحتية (مرحلة 1)
 
-تعمل بدون API، على الجهاز فقط.
+**المشكلة:** تعدد مزودين (Anthropic, Google, Moonshot) باختلافات API ومفاتيح حساسة.
 
-| الميزة | التنفيذ | ملاحظات |
+**الحل:** `src/server.js` مصنع Fastify موحد + `src/adapters/modelAdapter.js` بواجهة واحدة `callModel(model, text)`.
+
+### المكونات
+
+| المكون | الملف | Fallback بدون تثبيت |
 |---|---|---|
-| `charCount` / `wordCount` | `WORD_RE = /[\p{L}\p{N}_]+/gu` | unicode-aware |
-| `arabicRatio` | `ARABIC_RE = /[\u0600-\u06FF]/g` | `ar` >0.35، `mixed` >0.08 |
-| `hasCode` / `codeScore` | `CODE_SIGNALS` + عد أسطر `{}();=` | `codeScore = min(1, 0.6 + lines*0.15)` |
-| `technicalDensity` | `TECH_DICT` (40+ مصطلح) | `count / wordCount` |
-| `intent` | `INTENT_PATTERNS` unicode-aware | `write/review/analyze/summarize/code/retrieve` |
+| Fastify | `server.js` | stub `inject()` للاختبارات |
+| Postgres | `adapters/db.js` (`pg`) | `Map` memory + `memorySummaries` |
+| Redis | `adapters/cacheRedis.js` (`ioredis`) | `Map` memory |
+| S3 | `phase1/services/s3.js` (`@aws-sdk/client-s3`) | `Map` memory |
 
-حدود unicode مهمة للعربية: `\b` لا يعمل مع العربية بدون `u` flag، لذلك نستخدم `(?:^|[^\p{L}\p{N}_])...(?=[^\p{L}\p{N}_]|$)` مع `iu`.
+### الجداول — `migrations/000_phase1_core.sql`
+
+- `users` (id, email, password_hash, role)
+- `api_keys` (user_id, provider, key_hash) — لا يُخزن المفتاح الخام
+- `gateway_models` (id, provider, label, cost, max_tokens) — مهيأة بـ 6 نماذج
+- `gateway_requests` (model, prompt, response, latency, status, tokens)
+- `gateway_files` (s3_key, bucket, filename, mime, size)
+- `gateway_settings` (key, value)
+
+### Middleware — `phase1/middleware/*`
+
+- `requestLogger` — onRequest/onResponse + latency
+- `rateLimit` — window 60s / 60 طلب (Map fallback)
+- `errorHandler` — استجابة موحدة `{error, status, stack?}`
+
+### Routes — `phase1/routes/*`
+
+- `health.js`: `GET /health` (ok, version, phase), `GET /ready` (postgres/redis checks), `GET /v1/models`
+- `chat.js`: `POST /v1/chat/completions` (مباشر + streaming SSE), `POST /v1/embeddings` (mock 8 dims)
+
+في `server.js` تم توحيد `POST /v1/chat/completions` ليعمل كـ **مباشر** إذا أرسل `model` + `direct:true`، وإلا **ذكي** عبر `route()`.
 
 ---
 
-## 3. التصنيف (classifier.js)
+## 2. الرحلة الثانية — التطبيق (مرحلة 2)
 
-### 3a — rule-based (بدون ML)
-قواعد مرتبة حسب الأولوية: `code` > `retrieval` (قصير) > `analysis` > `creative` > `general`.
+**المشكلة:** بدون هوية ومحادثات، لا سياق ولا حصص ولا ملفات.
 
-### 3d — شجرة قرار / انحدار لوجستي
-- متجه 9 أبعاد: `[hasCode, codeScore, technicalDensity*4, wordCountNorm, arabicRatio, intent_code, intent_write, intent_analyze, intent_retrieve]`
-- أوزان `TREE_WEIGHTS` مضمنة كملف ثابت (كيلوبايتات) — قابلة للتحديث OTA بدون إعادة تدريب سحابي.
-- `softmax(logits)` → `probs` → أفضل فئة.
-- إذا `bestProb < 0.38` → fallback إلى القواعد (يحمي من ضوضاء الأوزان الأولية). إذا اتفق الاثنان نرفع الثقة.
+**الحل:** `phase2/*` + `migrations/002_phase2_conversations.sql`.
 
-هذا يعطي دقة جيدة بدون TensorFlow Lite أولاً (توفير حجم/بطارية)، مع تحديث تدريجي للأوزان عبر `ScoreStore`.
+### الجداول
+
+- `conversations` (id, user_id, title, model, pinned_model, updated_at)
+- `messages` (conversation_id, role, content, model, category, confidence, latency, regenerated)
+- `usage_daily` (user_id, day, requests, tokens)
+- `sessions` (user_id, token_hash, expires_at)
+
+### Auth — `phase2/services/authService.js`
+
+- `hashPassword` — `bcryptjs` أو fallback `sha256:`
+- `signJwt/verifyJwt` — `jsonwebtoken` أو fallback HMAC-SHA256
+- `createUser`, `authenticate`, `verifyToken` — تعمل مع Postgres أو `Map` memory
+- JWT secret من `JWT_SECRET` env
+
+### Conversations — `phase2/services/conversationService.js`
+
+- `createConversation`, `listConversations`, `getConversation`, `addMessage`, `listMessages`, `deleteConversation`
+- نفس واجهة Postgres/Memory — الاختبارات لا تحتاج DB
+
+### Middleware — `phase2/middleware/jwt.js`
+
+- `optionalAuth` — global preHandler يضيف `request.user` إن وجد `Bearer` صالح، ولا يمنع الضيف
+- `requireAuth` — route preHandler يمنع 401 إن لم يوجد user
+
+### Routes
+
+- `auth.js`: `POST /v1/auth/register`, `POST /v1/auth/login`, `GET /v1/auth/me` (requireAuth), `POST /v1/auth/api-keys`
+- `conversations.js`: CRUD + `POST /:id/chat` (ذكي داخل المحادثة) + ربط `POST /v1/chat/completions` بـ `conversation_id` للحفظ التلقائي
+- `uploads.js`: `POST /v1/uploads` (JSON base64 أو multipart) → S3/Memory + `gateway_files`
 
 ---
 
-## 4. التعقيد (complexity)
+## 3. الرحلة الثالثة — التوجيه الذكي (مرحلة 3)
 
-```js
+### 3.1 استخراج الميزات (`features.js`)
+
+| الميزة | التنفيذ |
+|---|---|
+| `charCount`/`wordCount` | `WORD_RE = /[\p{L}\p{N}_]+/gu` |
+| `arabicRatio` | `ARABIC_RE = /[\u0600-\u06FF]/g` → `ar`>0.35, `mixed`>0.08 |
+| `hasCode`/`codeScore` | `CODE_SIGNALS` + عد أسطر `{}();=` |
+| `technicalDensity` | `TECH_DICT` (40+ مصطلح) |
+| `intent` | `INTENT_PATTERNS` unicode-aware `iu` |
+
+### 3.2 التصنيف (`classifier.js`)
+
+- **3a rule-based:** `code` > `retrieval` (قصير) > `analysis` > `creative` > `general`
+- **3d tree:** متجه 9 أبعاد + `TREE_WEIGHTS` + `softmax` → `bestProb<0.38` → fallback rules
+
+### 3.3 التعقيد
+
+```
 complex: wc>180 || (code && (wc>80 || hasCode)) || (analysis && wc>90) || (ar>0.5 && wc>100)
 medium:  wc>35 || technicalDensity>0.12 || !intent
-simple:  otherwise
+simple:  otherwise → جرّب LocalCache أولاً
 ```
 
-يحدد الميزانية:
-
-| المستوى | الإجراء |
-|---|---|
-| simple | جرّب `LocalCache.get(hashKey(text,cat,model))` أولاً؛ إن وجد → رد فوري |
-| medium | النموذج الافتراضي للفئة |
-| complex | النموذج الأقوى + إمكانية استدعاء مزدوج للمقارنة (اختياري) |
-
----
-
-## 5. ScoreStore — التعلم المستمر (store.js)
-
-### الهيكل
-```json
-{ "category":"code", "model":"claude", "latency_ms":1840, "quality_score":0.8, "regenerated":false, "timestamp":"..." }
-```
-
-### Quality proxies (بدون طلب تقييم دائم)
-- هل أعاد التوليد؟ `regenerated=true` → quality منخفض
-- هل قصّر/عدّل الإجابة؟
-- هل النسخة النهائية طويلة نسبيًا (مؤشر اكتفاء)؟
-- تقييم يدوي 👍👎 إن وجد
-
-### التحديث — bandit epsilon-greedy
-```
-score[c][m] = (1-α)*score[c][m] + α*quality        // α=0.2 افتراضيًا
-manualCorrection → α×2.5 (حتى 0.6)                // التبديل اليدوي إشارة مؤكدة
-pick: 90% الأعلى score، 10% عشوائي من الباقي
-confidence = score * (1 - 1/(1+totalSamples))     // novelty_penalty
-```
-
-### التخزين
-- **على الجهاز**: `SQLite` (هنا `toJSON()/fromJSON()` + `log` آخر 2000 حدث، ملخص آخر 500 للإرسال).
-- **على الخادم**: `summaryForPostgres()` → `{ summary:{cat:{model:{score,samples}}}, totalEvents, regenRate }` → `INSERT INTO routing_summaries`.
-- **مزامنة**: `mergeSummary()` لدمج ملخص قادم من Postgres (متعدد أجهزة).
-
-لا يحتاج RL ثقيل على الهاتف — online update فقط.
-
----
-
-## 6. Heuristics قبل الاستدعاء (cache.js)
+### 3.4 ScoreStore (`store.js`)
 
 ```js
-shouldBypassModel({category, model, wordCount, store, threshold:0.52})
-// code + wordCount>60 + confidence<threshold → true
-// confidence<0.32 && total<4 → true
+score = (1-α)*score + α*quality  // α=0.2, manualCorrection→α×2.5
+pick: 90% الأعلى, 10% استكشاف
+confidence = score * (1 - 1/(1+total)) // novelty_penalty
 ```
 
-بدل استدعاء نموذجين ومقارنة، نقرر قبل الاستدعاء.
+- على الجهاز `SQLite/SharedPrefs` (هنا JSON memory)، على الخادم `summaryForPostgres()` → `routing_summaries`
+
+### 3.5 Heuristics + Cache (`cache.js`)
+
+- `shouldBypassModel` قبل الاستدعاء
+- `LocalCache` LRU+TTL (6h, 300) + `hashKey=sha256(cat::model::text)`
+- `OfflineQueue` max 100, حذف بعد 5 محاولات
+
+### 3.6 Gateway (`gateway.js` + `server.js`)
+
+- `POST /v1/route`, `POST /v1/feedback/auto`, `GET /v1/routing/stats`
+- `server.js` يوحد مرحلة 1 و 3 في `POST /v1/chat/completions` (direct vs smart)
 
 ---
 
-## 7. الكاش والطابور (cache.js)
+## 4. Flutter — يستهلك الرحلتين 1 و 2 + الذكاء
 
-- **LocalCache**: `Map` + `TTL` (افتراضي 6 ساعات) + `LRU` (maxEntries=300). المفتاح `hashKey = sha256(cat::model::text[0..2000])[:32]`.
-- **OfflineQueue**: طابور محلي `maxSize=100`، كل عنصر `{id, text, meta, attempts, createdAt}`. بعد 5 محاولات يُحذف لتفادي الانسداد. عند عودة الشبكة يُعاد الإرسال عبر Gateway الذي يملك retry/fallback أصلاً.
-
----
-
-## 8. تكامل Gateway (gateway.js)
-
-```js
-POST /v1/route   { text, overrideModel?, overrideCategory? }
-  → buildRouteHandler({store, cache, modelsByCategory, epsilon})
-  → { category, model, confidence, complexity, cached, key, candidates, method }
-
-POST /v1/feedback { category, model, quality, latency_ms, regenerated, manualCorrection }
-  → store.update(...)
-  → persistSummary(store.summaryForPostgres()) // best-effort
-
-GET /v1/routing/stats
-  → store.summaryForPostgres()
-```
-
-- يدعم `overrideModel` للتبديل اليدوي من UI (شريحة "تم اختيار Claude — سؤال كتابة إبداعية").
-- `persistSummary` اختيارية — لو فشلت لا تفشل الطلب.
-- المفاتيح لا تمر عبر التطبيق؛ فقط `text` يُرسل.
+- `smart_router.dart` — offline Dart
+- `main.dart` + `services/local_store.dart` (ScoreStore + pinnedModels + OfflineQueue)
+- `services/gateway_client.dart` (يرسل `text` + `conversation_id` + `Authorization`)
+- `screens/chat_screen.dart` + `widgets/routing_badge.dart` ("تم اختيار Claude — ...") + 👍👎
+- `screens/settings_screen.dart` — تثبيت نموذج لفئة + إحصائيات Postgres
 
 ---
 
-## 9. Flutter — تطبيق كامل
+## 5. الرحلة الرابعة — القياس والإشراف
 
-- `lib/smart_router.dart` — نفس المنطق بـ Dart (offline)
-- `lib/main.dart` + `lib/services/local_store.dart` (ScoreStore + تثبيت نموذج + OfflineQueue في SharedPreferences) + `lib/services/gateway_client.dart`
-- `lib/screens/chat_screen.dart` — محادثة + `widgets/routing_badge.dart` ("تم اختيار Claude — ...") + 👍👎 + إعادة توليد + طابور offline
-- `lib/screens/settings_screen.dart` — تثبيت نموذج لفئة (تجاوز كامل) + إحصائيات Postgres
-- `test/smart_router_test.dart` — 5 اختبارات Dart
+### Benchmark (`scripts/benchmark.js`)
 
----
+- 10k تكرار: `extractFeatures 7µs | classify 14µs | route 19µs`
+- `ScoreStore 2000 events: 87.5 KB`, `LocalCache 300: ~150 KB`
+- **القرار:** البقاء على decision tree — TFLite غير مبرر (<0.1% CPU/1000 توجيه)
 
-## 10. الخصوصية
+### Moderation (`moderation.js`) — طبقة موازية منفصلة
 
-- **يبقى على الجهاز**: التصنيف، heuristics، سجل الأداء، الكاش، الطابور.
-- **يُرسل**: نص الطلب النهائي فقط عبر Gateway (لا يُرسل القطيع/المفاتيح/معلومات التصنيف).
-- النموذج المحلي صغير جدًا (decision tree) بدون TFLite أولاً.
+- `preCheck`/`postCheck` → `{action:'allow'|'flag'|'block', reason, score}`
+- لا تُبنى كجزء من التوجيه؛ `MODERATION_ENABLED=true` تُفعّلها كـ middleware قبل/بعد
+- يجنب حجب غير مبرر ويبقي التوجيه خفيفًا
 
 ---
 
-## 11. خارطة الطريق
+## 6. خارطة الطريق — مكتملة
 
-| المرحلة | المحتوى | الحالة |
+| الرحلة | المرحلة | المحتوى | الحالة |
+|---|---|---|---|
+| 1 | 1 | Fastify + Postgres/Redis/S3 + محول موحد + health/embeddings | ✅ |
+| 2 | 2 | Auth JWT + Conversations CRUD + Uploads | ✅ |
+| 3 | 3a | ميزات + rule-based | ✅ |
+| 3 | 3b | bandit + Postgres summary + logger proxies | ✅ |
+| 3 | 3c | Flutter + OfflineQueue | ✅ |
+| 3 | 3d | شجرة قرار + online update | ✅ |
+| 4 | 4 | Benchmark + Moderation موازٍ | ✅ |
+
+---
+
+## 7. قرارات ولماذا
+
+| القرار | البديل | السبب |
 |---|---|---|
-| 3a | ميزات + مصنف rule-based | ✅ |
-| 3b | سجل أداء + bandit + Postgres summary + logger proxies | ✅ |
-| 3c | تطبيق Flutter كامل (chat + settings + OfflineQueue + Gateway client) + خادم Fastify كامل | ✅ |
-| 3d | شجرة قرار مدرّبة + تعلم تدريجي (TREE_WEIGHTS + online update) | ✅ |
-| 4 | اختبار بطارية/ذاكرة (`scripts/benchmark.js`) + طبقة إشراف موازية (`src/moderation.js`) | ✅ |
-
-تحديات محلولة من البنية الحالية: retry/fallback بين النماذج موجود في Gateway؛ يبقى طابور محلي في Flutter فقط.
+| Fastify stub للاختبارات | تثبيت fastify إلزامي | يعمل بدون deps ثقيلة في CI |
+| Memory fallback لكل من Postgres/Redis/S3 | فشل عند غياب الخدمات | تطوير واختبار بدون docker |
+| JWT fallback HMAC | jsonwebtoken إلزامي | اختبارات تمر بدون تثبيت |
+| direct vs smart في نفس endpoint | endpoint منفصل | أبسط للعميل + يحافظ على توافق مرحلة 1 |
+| Moderation موازٍ | جزء من classifier | لا نريد حجب التوجيه — طبقة منفصلة |
 
 ---
 
-## 12. قرارات تصميمية ولماذا
-
-| القرار | البديل المرفوض | السبب |
-|---|---|---|
-| bandit epsilon-greedy بدل RL | PPO / Thompson أثقل | كافٍ عمليًا، لا يحتاج بنية RL على الهاتف |
-| شجرة قرار بوزن ثابت + قواعد | Transformer صغير على الجهاز | حجم/بطارية/تعقيد غير مبرر في المرحلة 3 |
-| confidence = score*(1-novelty) | استدعاء نموذجين ومقارنة | يوفر تكلفة وكمون |
-| ملخصات لـ Postgres فقط | إرسال السجل الخام | خصوصية + توفير نقل |
-| Flutter | React Native | نفس ستاك بوت التداول الحالي |
-
----
-
-## 13. المخاطر والتخفيف
+## 8. المخاطر
 
 | الخطر | التخفيف |
 |---|---|
-| تصنيف خاطئ للعربية العامية | أوزان OTA + fallback rules + زر تبديل يدوي بوزن عالٍ |
-| سجل ضعيف لفئة جديدة | novelty_penalty عالٍ → ثقة منخفضة → heuristics تتجاوز للبديل |
-| كاش قديم | TTL 6 ساعات + LRU + إبطال عند feedback سلبي |
-| طابور offline يمتلئ | maxSize + حذف بعد 5 محاولات + إظهار حالة للمستخدم |
-| انحياز لنموذج واحد | epsilon 10% استكشاف + مراقبة regenRate |
+| تصنيف خاطئ عامي | OTA weights + fallback + تبديل يدوي |
+| سجل ضعيف | novelty_penalty عالٍ → heuristics تتجاوز |
+| كاش قديم | TTL 6h + LRU |
+| طابور offline ممتلئ | max 100 + حذف بعد 5 |
+| انحياز نموذج | epsilon 10% |
 
 ---
 
-## 14. اختبار الأداء (مرحلة 4)
+## 9. التشغيل
 
-- قياس ذاكرة `ScoreStore` (2000 حدث ≈ <200KB JSON) + `LocalCache` (300 مدخل).
-- قياس بطارية للاستدلال المتكرر (شجرة القرار ~ بضع ميكروثواني).
-- إذا لزم → النظر في moderation كطبقة موازية منفصلة، لا كجزء من التوجيه.
-
+```bash
+docker-compose up -d && npm run migrate  # 000 + 001 + 002
+npm test          # 45 اختبار
+npm run benchmark
+node examples/phase1-phase2.js
+node examples/gateway-example.js
+```

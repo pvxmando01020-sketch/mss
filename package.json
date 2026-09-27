@@ -1,7 +1,7 @@
 {
-  "name": "mss-smart-routing-engine",
-  "version": "0.4.0",
-  "description": "المرحلة 3+4 — محرك التوجيه الذكي فوق Fastify/Postgres/Redis/S3 + تطبيق Flutter + طبقة إشراف موازية",
+  "name": "mss-ai-gateway",
+  "version": "1.0.0",
+  "description": "الرحلة الكاملة 1→4 — AI Chat Gateway (Fastify/Postgres/Redis/S3) + Conversations/Auth + Smart Routing + Moderation + Flutter",
   "type": "commonjs",
   "main": "src/index.js",
   "exports": {
@@ -14,7 +14,9 @@
     "./gateway": "./src/gateway.js",
     "./server": "./src/server.js",
     "./moderation": "./src/moderation.js",
-    "./logger": "./src/logger.js"
+    "./logger": "./src/logger.js",
+    "./phase1": "./src/phase1/routes/health.js",
+    "./phase2": "./src/phase2/routes/conversations.js"
   },
   "scripts": {
     "start": "node src/server.js",
@@ -23,10 +25,12 @@
     "test:verbose": "node --test --test-reporter=spec tests/**/*.test.js",
     "benchmark": "node scripts/benchmark.js",
     "example": "node examples/gateway-example.js",
-    "lint": "node --check src/*.js",
-    "migrate": "psql $DATABASE_URL -f migrations/001_routing.sql"
+    "example:phase1": "node examples/phase1-phase2.js",
+    "lint": "node --check src/**/*.js",
+    "migrate": "for f in migrations/*.sql; do echo \"→ $f\"; psql $DATABASE_URL -f \"$f\"; done",
+    "migrate:memory": "echo 'memory fallback — no DB to migrate'"
   },
-  "keywords": ["ai-gateway", "smart-routing", "flutter", "fastify", "bandit", "on-device", "moderation"],
+  "keywords": ["ai-gateway", "fastify", "postgres", "redis", "s3", "smart-routing", "flutter", "jwt", "moderation"],
   "license": "MIT",
   "engines": { "node": ">=18" }
 }
